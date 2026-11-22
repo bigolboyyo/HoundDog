@@ -1,0 +1,49 @@
+# theta_hound: one repository for HoundDog, ThetaDesk, and the workspace launcher.
+
+# Secrets: never commit these. The user adds them beside ThetaDesk.exe or from Settings.
+.env
+.env.*
+!.env.example
+creds.txt
+**/creds.txt
+
+# Local data: databases, exports, logs, and backups
+*.db
+*.db-*
+*.bak
+*.log
+exports/
+watch.toml.tmp
+
+# Builds and executables (rebuild with each app's build_exe.ps1)
+build/
+dist/
+HoundDog/HoundDog.exe
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv*/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Java (ThetaTerminal.jar itself is tracked: ThetaDesk's build copies it)
+*.class
+target/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-app-theme="pico" data-color-mode="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>HoundDog: RSS/Atom Keyword Watcher</title>
+    <link rel="stylesheet" href="/pico-main/css/pico.min.css">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <nav class="toolbar" aria-label="Tools">
+      <button class="tool-button" type="button" data-tool="check" aria-controls="tool-check" aria-expanded="false" title="Check feeds">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"></path>
+          <path d="M4 4v4h4"></path>
+          <path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"></path>
+          <path d="M20 20v-4h-4"></path>
+        </svg>
+        <span class="tool-label">Check</span>
+      </button>
+      <button class="tool-button" type="button" data-tool="tester" aria-controls="tool-tester" aria-expanded="false" title="Topic tester">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 3h6"></path>
+          <path d="M10 3v6l-5.5 9.5A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-2.5L14 9V3"></path>
+          <path d="M7 15h10"></path>
+        </svg>
+        <span class="tool-label">Tester</span>
+      </button>
+      <button class="tool-button" type="button" data-tool="health" aria-controls="tool-health" aria-expanded="false" title="Feed health">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12h4l2-6 4 12 2-6h6"></path>
+        </svg>
+        <span class="tool-label">Health</span>
+      </button>
+      <button class="tool-button" type="button" data-tool="log" aria-controls="tool-log" aria-expanded="false" title="Activity log">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 6h11"></path>
+          <path d="M9 12h11"></path>
+          <path d="M9 18h11"></path>
+          <path d="M4 6h1"></path>
+          <path d="M4 12h1"></path>
+          <path d="M4 18h1"></path>
+        </svg>
+        <span class="tool-label">Log</span>
+      </button>
+      <button class="tool-button tool-button-bottom" type="button" data-tool="settings" aria-controls="tool-settings" aria-expanded="false" title="Settings">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h9"></path>
+          <path d="M19 6h1"></path>
+          <circle cx="16" cy="6" r="2"></circle>
+          <path d="M4 12h3"></path>
+          <path d="M13 12h7"></path>
+          <circle cx="10" cy="12" r="2"></circle>
+          <path d="M4 18h11"></path>
+          <circle cx="18" cy="18" r="2"></circle>
+        </svg>
+        <span class="tool-label">Settings</span>
+      </button>
+    </nav>
+
+    <section id="tool-check" class="tool-flyout" aria-labelledby="tool-check-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-check-title">Check feeds</h2>
+        <button class="text-button" type="button" data-close-tool aria-label="Close">Close</button>
+      </div>
+      <p id="check-actions-help" class="tool-help">Check &amp; save adds new matches to History. Preview only shows matches without saving.</p>
+      <p id="check-status" class="tool-status">Not checked yet</p>
+      <p id="auto-check-status" class="tool-help">Automatic checks are off</p>
+      <div class="tool-actions">
+        <button id="dry-run-button" class="button button-secondary" type="button" aria-describedby="check-actions-help">Preview only</button>
+        <button id="check-button" class="button button-primary" type="button" aria-describedby="check-actions-help">Check &amp; save</button>
+      </div>
+    </section>
+
+    <section id="tool-tester" class="tool-flyout tool-flyout-wide" aria-labelledby="tool-tester-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-tester-title">Topic tester</h2>
+        <button class="text-button" type="button" data-close-tool aria-label="Close">Close</button>
+      </div>
+      <p class="tool-help">Try keywords against recent feed items or your history. Nothing is saved until you press Save topic.</p>
+      <form id="tester-form" class="settings-form">
+        <div class="settings-fields">
+          <label>
+            Start from
+            <select id="tester-topic"></select>
+          </label>
+          <label>
+            Test against
+            <select id="tester-corpus">
+              <option value="latest">Latest feed items</option>
+              <option value="history">History</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          Topic name
+          <input id="tester-name" type="text" required placeholder="Name it to save">
+        </label>
+        <label>
+          Include keywords
+          <input id="tester-keywords" type="text" required placeholder="LLM*, agents, prompt injection">
+        </label>
+        <label>
+          Exclude keywords
+          <input id="tester-exclude" type="text" placeholder="crypto, spam">
+        </label>
+        <div class="settings-actions">
+          <button id="tester-refresh" class="button button-secondary" type="button">Fetch latest items</button>
+          <button class="button button-primary" type="submit">Save topic</button>
+        </div>
+      </form>
+      <p id="tester-summary" class="tool-status" aria-live="polite">Enter at least one include keyword to test.</p>
+      <ul id="tester-keyword-report" class="tester-keywords"></ul>
+      <ul id="tester-results" class="tester-results"></ul>
+    </section>
+
+    <section id="tool-health" class="tool-flyout tool-flyout-wide" aria-labelledby="tool-health-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-health-title">Feed health</h2>
+        <button class="text-button" type="button" data-close-tool aria-label="Close">Close</button>
+      </div>
+      <p class="tool-help">How each configured feed did in recent checks, from the command line, the dashboard, or auto-check.</p>
+      <ul id="health-list" class="tool-list"></ul>
+    </section>
+
+    <section id="tool-log" class="tool-flyout tool-flyout-wide" aria-labelledby="tool-log-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-log-title">Activity log</h2>
+        <button class="text-button" type="button" data-close-tool aria-label="Close">Close</button>
+      </div>
+      <p class="tool-help">The last 100 checks. Previews and dry runs are listed too; they never change History.</p>
+      <ol id="activity-list" class="tool-list"></ol>
+    </section>
+
+    <section id="tool-settings" class="tool-flyout tool-flyout-wide tool-flyout-bottom" aria-labelledby="tool-settings-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-settings-title">Settings</h2>
+        <button class="text-button" type="button" data-close-tool aria-label="Close">Close</button>
+      </div>
+      <div class="settings-layout">
+        <nav class="settings-nav" aria-label="Settings sections">
+          <button class="settings-nav-button" type="button" data-panel="appearance">Appearance</button>
+          <button class="settings-nav-button" type="button" data-panel="display">Display</button>
+          <button class="settings-nav-button" type="button" data-panel="checking">Checking</button>
+          <button class="settings-nav-button" type="button" data-panel="feeds">Feeds</button>
+          <button class="settings-nav-button" type="button" data-panel="data">Data</button>
+        </nav>
+        <div class="settings-sections">
+          <section id="settings-appearance" class="settings-section" aria-label="Appearance">
+            <p class="settings-description">Theme and color mode. Saved in this browser.</p>
+            <fieldset class="mode-picker">
+              <legend>Color mode <small>Applies to every theme</small></legend>
+              <div class="mode-options">
+                <label id="mode-card-dark" class="mode-option">
+                  <input id="mode-dark" type="radio" name="color-mode" value="dark">
+                  <span>Dark</span>
+                </label>
+                <label id="mode-card-light" class="mode-option is-selected">
+                  <input id="mode-light" type="radio" name="color-mode" value="light" checked>
+                  <span>Light</span>
+                </label>
+              </div>
+            </fieldset>
+            <fieldset class="theme-picker">
+              <legend>Color theme</legend>
+              <label id="theme-card-pico" class="theme-option">
+                <input id="theme-pico" type="radio" name="app-theme" value="pico">
+                <span class="theme-preview pico-preview" aria-hidden="true">
+                  <i></i><i></i><i></i>
+                </span>
+                <span class="theme-description">
+                  <strong>Pico default</strong>
+                  <small>Clean, responsive styling from Pico.css.</small>
+                </span>
+                <span id="theme-active-pico" class="theme-active" hidden>Active</span>
+              </label>
+              <label id="theme-card-dos" class="theme-option">
+                <input id="theme-dos" type="radio" name="app-theme" value="dos">
+                <span class="theme-preview dos-preview" aria-hidden="true">
+                  <i></i><i></i><i></i>
+                </span>
+                <span class="theme-description">
+                  <strong>Classic DOS terminal</strong>
+                  <small>Phosphor-green text on a deep black screen.</small>
+                </span>
+                <span id="theme-active-dos" class="theme-active" hidden>Active</span>
+              </label>
+              <label id="theme-card-nes" class="theme-option" hidden>
+                <input id="theme-nes" type="radio" name="app-theme" value="nes">
+                <span class="theme-preview nes-preview" aria-hidden="true">
+                  <i></i><i></i><i></i>
+                </span>
+                <span class="theme-description">
+                  <strong>8-bit NES.css</strong>
+                  <small>Pixel borders and classic game-inspired colors.</small>
+                </span>
+                <span id="theme-active-nes" class="theme-active" hidden>Active</span>
+              </label>
+            </fieldset>
+          </section>
+          <section id="settings-display" class="settings-section" aria-label="Display" hidden>
+            <p class="settings-description">Interface size and feed images. Saved in this browser.</p>
+            <fieldset class="size-picker">
+              <legend>UI size <small>Adjust the overall interface</small></legend>
+              <div class="size-control">
+                <label for="ui-scale">Interface size</label>
+                <output id="ui-scale-value" for="ui-scale">100%</output>
+                <input id="ui-scale" type="range" min="80" max="120" step="5" value="100">
+              </div>
+              <div class="size-labels" aria-hidden="true">
+                <span>Compact</span>
+                <span>Large</span>
+              </div>
+            </fieldset>
+            <fieldset class="settings-group">
+              <legend>Feed images</legend>
+              <label class="toggle-row">
+                <input id="show-images" type="checkbox" role="switch">
+                <span>Load images from feed publishers</span>
+              </label>
+              <small class="settings-hint">Off by default. Loading an image contacts the publisher's server, which sees your IP address. Cards show the source name instead.</small>
+            </fieldset>
+          </section>
+          <section id="settings-checking" class="settings-section" aria-label="Checking" hidden>
+            <fieldset class="settings-group">
+              <legend>Automatic checks</legend>
+              <div class="choice-row" role="radiogroup" aria-label="Who runs automatic checks">
+                <label class="toggle-row">
+                  <input id="check-mode-off" type="radio" name="check-mode" value="off">
+                  <span>Off</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="check-mode-dashboard" type="radio" name="check-mode" value="dashboard">
+                  <span>This dashboard tab</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="check-mode-background" type="radio" name="check-mode" value="background">
+                  <span>Background job (Windows)</span>
+                </label>
+              </div>
+              <p id="check-mode-status" class="settings-description" aria-live="polite"></p>
+              <div class="settings-fields">
+                <label>
+                  Check every
+                  <select id="check-interval"></select>
+                </label>
+                <label id="dashboard-check-action">
+                  Action
+                  <select id="auto-check-action">
+                    <option value="preview">Preview only</option>
+                    <option value="save">Check &amp; save</option>
+                  </select>
+                </label>
+              </div>
+              <div id="background-check-options" hidden>
+                <label class="toggle-row">
+                  <input id="job-battery" type="checkbox" role="switch">
+                  <span>Run on battery</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="job-catch-up" type="checkbox" role="switch">
+                  <span>Catch up on a missed check after sleep or shutdown</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="job-network" type="checkbox" role="switch">
+                  <span>Only when connected to a network</span>
+                </label>
+                <div class="settings-actions">
+                  <button id="job-run" class="button button-secondary" type="button">Run now</button>
+                  <button id="job-repair" class="button button-secondary" type="button" hidden>Repair task</button>
+                </div>
+                <details id="job-log-details" class="job-log-details" hidden>
+                  <summary>Messages from background runs</summary>
+                  <pre id="job-log" class="job-log"></pre>
+                  <button id="job-log-clear" class="text-button" type="button">Clear messages</button>
+                </details>
+              </div>
+              <small id="check-mode-hint" class="settings-hint"></small>
+            </fieldset>
+            <fieldset class="settings-group">
+              <legend>Notifications</legend>
+              <label class="toggle-row">
+                <input id="notify-new-matches" type="checkbox" role="switch">
+                <span>Desktop notification when an auto-check finds new matches</span>
+              </label>
+              <small class="settings-hint">For checks run by this dashboard tab. Each match is announced once per session, even if Preview only finds it again.</small>
+            </fieldset>
+          </section>
+          <section id="settings-feeds" class="settings-section" aria-label="Feeds" hidden>
+            <p class="settings-description">Saved to watch.toml and also used by the command-line watcher.</p>
+            <form id="feed-settings-form" class="settings-form">
+              <div class="settings-fields">
+                <label>
+                  Request timeout (seconds)
+                  <input id="setting-fetch-timeout" type="number" min="1" max="120" step="1" required>
+                </label>
+                <label>
+                  Maximum feed size (MB)
+                  <input id="setting-max-feed-size" type="number" min="1" max="50" step="1" required>
+                </label>
+              </div>
+              <label>
+                User agent
+                <input id="setting-user-agent" type="text" maxlength="200" required spellcheck="false">
+                <small class="settings-hint">Some sites block unfamiliar user agents.</small>
+              </label>
+              <label>
+                Ignore items older than (days)
+                <input id="setting-max-item-age" type="number" min="0" max="3650" step="1" required>
+                <small class="settings-hint">By published date; 0 turns this off. Items without a date are always checked.</small>
+              </label>
+              <small id="feed-settings-defaults" class="settings-hint"></small>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">Save</button>
+              </div>
+            </form>
+          </section>
+          <section id="settings-data" class="settings-section" aria-label="Data" hidden>
+            <p class="settings-description">History retention is saved to watch.toml and also applies to the command-line watcher.</p>
+            <form id="retention-form" class="settings-form">
+              <label>
+                Keep history for (days)
+                <input id="setting-history-retention" type="number" min="0" max="3650" step="1" required>
+                <small class="settings-hint">Default 90; 0 keeps everything. Favorites are always kept. Older items are removed after the next saved check; one still in its feed can be reported as new again when that feed next changes.</small>
+              </label>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">Save</button>
+              </div>
+            </form>
+            <form id="event-export-form" class="settings-form">
+              <label class="toggle-row">
+                <input id="setting-event-export" type="checkbox">
+                <span>Write event files for other programs</span>
+              </label>
+              <small class="settings-hint">Every saved check adds what it found, and which feeds it read, to a file per day in the exports folder beside watcher.db. History retention never removes them. See INTEGRATION.md.</small>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">Save</button>
+              </div>
+            </form>
+            <fieldset class="settings-group">
+              <legend>Export</legend>
+              <div class="settings-actions">
+                <a class="button button-secondary" role="button" href="/api/export?format=json" download>Full backup (JSON)</a>
+                <a class="button button-secondary" role="button" href="/api/export?format=csv" download>History (CSV)</a>
+              </div>
+            </fieldset>
+            <fieldset class="settings-group">
+              <legend>Import a backup</legend>
+              <input id="import-file" type="file" accept="application/json,.json">
+              <label class="toggle-row">
+                <input id="import-config" type="checkbox" checked>
+                <span>Replace feeds, topics, and settings</span>
+              </label>
+              <label class="toggle-row">
+                <input id="import-history" type="checkbox" checked>
+                <span>Merge history (existing items are kept)</span>
+              </label>
+              <div class="settings-actions">
+                <button id="import-button" class="button button-secondary" type="button">Import</button>
+              </div>
+            </fieldset>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow brand-line">HoundDog: <small>RSS/Atom Keyword Watcher</small></p>
+          <h1>Dashboard</h1>
+        </div>
+      </header>
+
+      <section class="stats" aria-label="Watcher summary">
+        <article class="stat">
+          <span>Sources</span>
+          <strong id="source-count">-</strong>
+        </article>
+        <article class="stat">
+          <span>Topics</span>
+          <strong id="topic-count">-</strong>
+        </article>
+        <article class="stat">
+          <span>History</span>
+          <strong id="history-count">-</strong>
+        </article>
+      </section>
+
+      <nav class="tabs" aria-label="Dashboard sections">
+        <button class="tab is-active" type="button" data-panel="inbox">Inbox <span id="inbox-count" class="tab-count"></span></button>
+        <button class="tab" type="button" data-panel="matches">Matches</button>
+        <button class="tab" type="button" data-panel="history">History</button>
+        <button class="tab" type="button" data-panel="feeds">Setup</button>
+      </nav>
+
+      <section id="inbox-panel" class="panel">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Saved and unread</p>
+            <h2>Inbox</h2>
+          </div>
+          <button id="inbox-mark-read" class="button button-secondary" type="button">Mark all read</button>
+        </div>
+        <input id="inbox-search" class="list-search" type="search" placeholder="Search inbox" aria-label="Search inbox" autocomplete="off" spellcheck="false">
+        <div id="inbox-list" class="content-list article-grid"></div>
+        <nav id="inbox-pager" class="pager" aria-label="Inbox pages" hidden>
+          <button id="inbox-prev" class="text-button" type="button">Previous</button>
+          <span id="inbox-page-status" class="pager-status" aria-live="polite"></span>
+          <button id="inbox-next" class="text-button" type="button">Next</button>
+          <label class="page-size">
+            Per page
+            <select id="inbox-page-size"></select>
+          </label>
+        </nav>
+      </section>
+
+      <section id="matches-panel" class="panel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Latest check</p>
+            <h2>New matches</h2>
+          </div>
+        </div>
+        <input id="matches-search" class="list-search" type="search" placeholder="Search matches" aria-label="Search matches" autocomplete="off" spellcheck="false">
+        <div id="matches-list" class="content-list article-grid">
+          <p class="empty">Open Check in the toolbar to find new matches.</p>
+        </div>
+        <nav id="matches-pager" class="pager" aria-label="Match pages" hidden>
+          <button id="matches-prev" class="text-button" type="button">Previous</button>
+          <span id="matches-page-status" class="pager-status" aria-live="polite"></span>
+          <button id="matches-next" class="text-button" type="button">Next</button>
+          <label class="page-size">
+            Per page
+            <select id="matches-page-size"></select>
+          </label>
+        </nav>
+      </section>
+
+      <section id="history-panel" class="panel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Previously matched</p>
+            <h2>History</h2>
+          </div>
+          <button id="reset-history-button" class="button button-danger" type="button">Clear history</button>
+        </div>
+        <div class="list-controls">
+          <input id="history-search" class="list-search" type="search" placeholder="Search history" aria-label="Search history" autocomplete="off" spellcheck="false">
+          <label class="list-filter">
+            Show
+            <select id="history-filter">
+              <option value="all">All</option>
+              <option value="unread">Unread</option>
+              <option value="starred">Favorites</option>
+            </select>
+          </label>
+        </div>
+        <div id="history-list" class="content-list article-grid"></div>
+        <nav id="history-pager" class="pager" aria-label="History pages" hidden>
+          <button id="history-prev" class="text-button" type="button">Previous</button>
+          <span id="history-page-status" class="pager-status" aria-live="polite"></span>
+          <button id="history-next" class="text-button" type="button">Next</button>
+          <label class="page-size">
+            Per page
+            <select id="history-page-size"></select>
+          </label>
+        </nav>
+      </section>
+
+      <section id="feeds-panel" class="panel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Configuration</p>
+            <h2>Feeds &amp; topics</h2>
+          </div>
+        </div>
+        <div class="setup-grid">
+          <section class="config-section" aria-labelledby="feeds-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Sources</p>
+                <h3 id="feeds-heading">Feed sources</h3>
+              </div>
+              <button id="add-feed-button" class="button button-primary" type="button">Add feed</button>
+            </div>
+            <form id="feed-form" class="editor-form" hidden>
+              <div class="editor-heading">
+                <h4 id="feed-form-title">Add a feed</h4>
+              </div>
+              <div class="form-fields">
+                <label>
+                  Feed name
+                  <input id="feed-name" type="text" required placeholder="Example News">
+                </label>
+                <label>
+                  RSS or Atom URL
+                  <input id="feed-url" type="url" required placeholder="https://example.com/feed.xml">
+                </label>
+                <label>
+                  Check every (minutes)
+                  <input id="feed-interval" type="number" min="1" max="10080" step="1" placeholder="Every check">
+                  <small class="settings-hint">Optional. For feeds that update rarely, such as daily digests.</small>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button class="button button-secondary" type="button" data-cancel-editor="feed">Cancel</button>
+                <button class="button button-primary" type="submit">Save feed</button>
+              </div>
+            </form>
+            <div id="feeds-list" class="content-list"></div>
+          </section>
+          <section class="config-section" aria-labelledby="topics-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Matching rules</p>
+                <h3 id="topics-heading">Topics &amp; keywords</h3>
+              </div>
+              <button id="add-topic-button" class="button button-primary" type="button">Add topic</button>
+            </div>
+            <form id="topic-form" class="editor-form" hidden>
+              <div class="editor-heading">
+                <h4 id="topic-form-title">Add a topic</h4>
+              </div>
+              <div class="form-fields">
+                <label>
+                  Topic name
+                  <input id="topic-name" type="text" required placeholder="AI tooling">
+                </label>
+                <label>
+                  Include keywords
+                  <input id="topic-keywords" type="text" required placeholder="LLM*, agents, prompt injection">
+                  <small>Comma-separated. Add * for a word prefix, such as agent*.</small>
+                </label>
+                <label>
+                  Exclude keywords
+                  <input id="topic-exclude" type="text" placeholder="crypto, spam">
+                  <small>Optional. Any excluded term prevents a match.</small>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button class="button button-secondary" type="button" data-cancel-editor="topic">Cancel</button>
+                <button class="button button-primary" type="submit">Save topic</button>
+              </div>
+            </form>
+            <div id="topics-list" class="content-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div id="notice" class="notice" role="status" hidden></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
