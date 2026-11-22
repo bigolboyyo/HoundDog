@@ -38,6 +38,8 @@ const settingsEmail = document.querySelector("#settings-email");
 const settingsPassword = document.querySelector("#settings-password");
 const settingsSaveButton = document.querySelector("#save-settings");
 const settingsStatus = document.querySelector("#settings-status");
+const shutdownButton = document.querySelector("#shutdown-button");
+const stoppedNotice = document.querySelector("#stopped");
 
 const MAX_HISTORY_DAYS = 365;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
@@ -144,6 +146,25 @@ async function saveSettings(event) {
   } finally {
     settingsSaveButton.disabled = false;
   }
+}
+
+async function shutDown() {
+  if (!window.confirm("Shut down ThetaDesk? This page stops working until you start it again.")) return;
+  shutdownButton.disabled = true;
+  try {
+    const response = await fetch("/api/v1/shutdown", { method: "POST", headers: { Accept: "application/json" } });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.detail || `Request failed (${response.status}).`);
+    }
+  } catch (error) {
+    setMessage(`Could not shut down: ${error instanceof Error ? error.message : error}`, true);
+    shutdownButton.disabled = false;
+    return;
+  }
+  settingsDialog.close();
+  symbolsDialog.close();
+  stoppedNotice.hidden = false;
 }
 
 function updateQuota(response) {
@@ -669,6 +690,7 @@ clearPinsButton.addEventListener("click", () => {
 });
 
 openSettingsButton.addEventListener("click", openSettings);
+shutdownButton.addEventListener("click", shutDown);
 closeSettingsButton.addEventListener("click", () => settingsDialog.close());
 settingsForm.addEventListener("submit", saveSettings);
 settingsDialog.addEventListener("click", (event) => {

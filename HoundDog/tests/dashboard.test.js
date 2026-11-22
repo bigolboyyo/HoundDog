@@ -155,14 +155,14 @@ async function loadDashboard({
         return [element("#mode-dark"), element("#mode-light")];
       }
       if (selector === ".tool-button") {
-        return ["check", "tester", "health", "log", "settings"].map((name) => {
+        return ["check", "tester", "health", "log", "settings", "shutdown"].map((name) => {
           const tool = element(`#tool-button-${name}`);
           tool.dataset.tool = name;
           return tool;
         });
       }
       if (selector === "[data-close-tool]") {
-        return [element("#tool-close-check"), element("#tool-close-settings")];
+        return [element("#tool-close-check"), element("#tool-close-shutdown"), element("#tool-close-settings")];
       }
       if (selector === ".tab") {
         return ["inbox", "matches", "history", "feeds"].map((panel) => {
@@ -687,12 +687,12 @@ test("check actions live in the toolbar flyout, not the page header", () => {
   assert.doesNotMatch(html, /class="dock"/);
 });
 
-test("Settings is the last toolbar tool, pinned to the bottom, with its own sections", () => {
+test("Settings and Shut down close the toolbar, pinned to the bottom, and Settings has its own sections", () => {
   const html = readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   const tools = [...html.matchAll(/class="(tool-button[^"]*)" type="button" data-tool="(\w+)"/g)];
-  assert.deepEqual(tools.map((match) => match[2]), ["check", "tester", "health", "log", "settings"]);
-  assert.match(tools.at(-1)[1], /tool-button-bottom/);
-  assert.equal(tools.filter((match) => /tool-button-bottom/.test(match[1])).length, 1);
+  assert.deepEqual(tools.map((match) => match[2]), ["check", "tester", "health", "log", "settings", "shutdown"]);
+  // The first pinned tool takes the free space above it, so both sit at the bottom.
+  assert.deepEqual(tools.filter((match) => /tool-button-bottom/.test(match[1])).map((match) => match[2]), ["settings"]);
 
   const flyout = html.slice(html.indexOf('<section id="tool-settings"'), html.indexOf("<main"));
   assert.match(flyout, /id="settings-appearance"[\s\S]*name="app-theme"/);
@@ -1441,4 +1441,38 @@ test("run now and clearing messages use their endpoints", async () => {
   const sent = elements.get("requests").filter((request) => request.method).map((request) => [request.method, request.path]);
   assert.deepEqual(sent.slice(-2), [["POST", "/api/schedule/run"], ["DELETE", "/api/schedule/log"]]);
   assert.equal(elements.get("#job-log-details").hidden, true);
+});
+
+test("shut down opens a confirmation from the toolbar; only confirming stops the server", async () => {
+  const elements = await loadDashboard();
+  const shutdowns = () => elements.get("requests").filter((request) => request.path === "/api/shutdown");
+  const confirm = elements.get("#shutdown-confirm");
+
+  elements.get("#tool-button-shutdown").listeners.click();
+  assert.equal(elements.get("#tool-shutdown").hidden, false);
+  assert.equal(elements.get("#tool-settings").hidden, true);
+  elements.get("#tool-close-shutdown").listeners.click();
+  assert.equal(elements.get("#tool-shutdown").hidden, true);
+  assert.equal(shutdowns().length, 0);
+
+  elements.get("#tool-button-shutdown").listeners.click();
+  await confirm.listeners.click({ currentTarget: confirm });
+  assert.equal(shutdowns().length, 1);
+  assert.equal(shutdowns()[0].method, "POST");
+  assert.equal(elements.get("#tool-shutdown").hidden, true);
+  assert.equal(elements.get("document").querySelector("#stopped").hidden, false);
+});
+
+test("a refused shut down leaves the page working and says why", async () => {
+  const elements = await loadDashboard({
+    apiResponses: { "/api/shutdown": { status: 403, error: "Cross-origin request refused" } },
+  });
+  const confirm = elements.get("#shutdown-confirm");
+
+  elements.get("#tool-button-shutdown").listeners.click();
+  await confirm.listeners.click({ currentTarget: confirm });
+  assert.notEqual(elements.get("document").querySelector("#stopped").hidden, false);
+  assert.equal(elements.get("#tool-shutdown").hidden, false);
+  assert.equal(confirm.disabled, false);
+  assert.match(elements.get("#notice").textContent, /Could not shut down: Cross-origin request refused/);
 });

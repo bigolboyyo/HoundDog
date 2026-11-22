@@ -13,9 +13,10 @@ The launcher creates `.venv` when needed, installs dependencies when
 client. If the Terminal is already running, its REST fallback is available.
 Otherwise, the launcher asks whether to start the bundled Terminal as a
 backup. When `creds.txt` is present, it passes that file explicitly to the
-Terminal. If declined, the API uses the Python client only for that run. Press
-Ctrl+C to stop the API and any Terminal process it started; the Terminal opens
-in a separate window.
+Terminal. If declined, the API uses the Python client only for that run. To
+stop the API and any Terminal process it started, click **Shut down** at the
+top of the dashboard or press Ctrl+C; a price load in progress finishes first.
+The Terminal opens in a separate window.
 
 ## Windows executable
 

@@ -13,7 +13,8 @@ creds.txt
 *.bak
 *.log
 exports/
-watch.toml.tmp
+bridge/demo/
+*.toml.tmp
 
 # Builds and executables (rebuild with each app's build_exe.ps1)
 build/

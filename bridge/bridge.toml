@@ -1,0 +1,26 @@
+# theta_hound bridge settings. Paths are relative to this file.
+# The bridge dashboard rewrites this file when it adds tickers or groups.
+#
+# [inputs] thetadesk_exports empty: ThetaDesk's store, %LOCALAPPDATA%\ThetaDesk\exports
+# [[symbols]]: a ticker and the HoundDog topics that count as news about it.
+# [[groups]]: a named set of tickers, studied together.
+
+[inputs]
+hounddog_exports = "../HoundDog/exports"
+thetadesk_exports = ""
+
+[[symbols]]
+symbol = "AAPL"
+topics = ["AAPL"]
+
+[[symbols]]
+symbol = "MSFT"
+topics = ["MSFT"]
+
+[[symbols]]
+symbol = "TSLA"
+topics = ["TSLA"]
+
+[[groups]]
+name = "Tech Bros"
+symbols = ["AAPL", "MSFT", "TSLA"]

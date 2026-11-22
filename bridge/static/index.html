@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>theta_hound bridge</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>theta_hound bridge</h1>
+    <div class="top-actions">
+      <span id="updated" class="muted"></span>
+      <button id="refresh" type="button">Refresh</button>
+      <button id="shutdown" type="button">Shut down</button>
+    </div>
+  </header>
+  <p id="banner" class="banner" hidden></p>
+  <p id="notice" class="notice" hidden></p>
+
+  <main>
+    <section class="cards" aria-label="Sources">
+      <article class="card">
+        <h2>HoundDog</h2>
+        <p id="hounddog-live" class="pill"></p>
+        <dl id="hounddog-facts" class="facts"></dl>
+      </article>
+      <article class="card">
+        <h2>ThetaDesk</h2>
+        <dl id="thetadesk-facts" class="facts"></dl>
+      </article>
+    </section>
+
+    <section class="panel" aria-labelledby="watch-title">
+      <h2 id="watch-title">Watch tickers</h2>
+      <p class="muted">
+        Each ticker becomes a HoundDog topic of the same name, so its news is collected, and is added
+        to the study. A group studies several tickers together; each keeps its own topic, so news about
+        one company never counts for another.
+      </p>
+      <p id="watch-off" class="muted" hidden></p>
+      <form id="watch-form">
+        <fieldset>
+          <legend>Tickers (those with prices in ThetaDesk, plus any you add)</legend>
+          <div id="ticker-choices" class="choices"></div>
+          <div class="inline">
+            <label for="other-ticker">Another ticker</label>
+            <input id="other-ticker" maxlength="16" autocomplete="off" placeholder="e.g. TSLA">
+            <button id="add-other" type="button">Add</button>
+          </div>
+        </fieldset>
+        <div id="keyword-rows" class="keyword-rows"></div>
+        <div class="inline">
+          <label for="group-name">Group (optional)</label>
+          <input id="group-name" maxlength="80" list="group-names" autocomplete="off" placeholder="e.g. Tech Bros">
+          <datalist id="group-names"></datalist>
+        </div>
+        <button id="watch-submit" type="submit" class="primary" disabled>Watch selected tickers</button>
+        <ul id="watch-results" class="results"></ul>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="study-title">
+      <h2 id="study-title">Study: news sessions against quiet sessions</h2>
+      <p class="muted">
+        Average move is the size of the close-to-close change, up or down. Volume is a multiple of the
+        ticker's median. Quiet sessions count only while HoundDog was watching the ticker's topic.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Ticker or group</th>
+              <th scope="col">News sessions</th>
+              <th scope="col">Quiet sessions</th>
+              <th scope="col">Avg move, news</th>
+              <th scope="col">Avg move, quiet</th>
+              <th scope="col">Volume, news</th>
+              <th scope="col">Volume, quiet</th>
+              <th scope="col">Not watched</th>
+            </tr>
+          </thead>
+          <tbody id="study-rows"></tbody>
+        </table>
+      </div>
+      <ul id="study-notes" class="notes"></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="detail-title">
+      <div class="inline">
+        <h2 id="detail-title">Ticker detail</h2>
+        <label for="detail-symbol" class="visually-hidden">Ticker</label>
+        <select id="detail-symbol"></select>
+      </div>
+      <div id="chart" class="chart" role="img" aria-label="Closing prices"></div>
+      <p class="legend">
+        <span class="dot news"></span> news session
+        <span class="dot quiet"></span> quiet session
+        <span class="dot unwatched"></span> not watched
+      </p>
+      <h3>Live articles</h3>
+      <ul id="detail-events" class="events"></ul>
+    </section>
+  </main>
+  <div id="stopped" class="stopped" role="alert" hidden>
+    <div>
+      <h2>The bridge has stopped</h2>
+      <p>You can close this tab. Start it again from start.bat.</p>
+    </div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

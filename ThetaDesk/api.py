@@ -1,3 +1,4 @@
+import argparse
 import ipaddress
 import logging
 import os
@@ -9,6 +10,7 @@ from math import ceil
 from pathlib import Path as FilePath
 from typing import Any
 
+import uvicorn
 from dotenv import dotenv_values, load_dotenv, set_key, unset_key
 from fastapi import FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +94,31 @@ class CredentialSettingsSavedResponse(BaseModel):
     credentials_configured: bool
 
 
+class ShutdownResponse(BaseModel):
+    stopping: bool
+
+
+class ServerStop:
+    """Lets the dashboard stop the server it is served by. uvicorn then finishes
+    the requests in progress, a bar fetch included, before exiting, as on Ctrl+C."""
+
+    def __init__(self) -> None:
+        self._server: uvicorn.Server | None = None
+
+    def attach(self, server: uvicorn.Server) -> None:
+        self._server = server
+
+    def request(self) -> bool:
+        """Ask the server to stop; False if it was not started by serve()."""
+        if self._server is None:
+            return False
+        self._server.should_exit = True
+        return True
+
+
+SERVER_STOP = ServerStop()
+
+
 @lru_cache(maxsize=1)
 def _cached_stock_symbols() -> tuple[str, ...]:
     records = records_from_history(get_stock_symbols())
@@ -153,6 +180,12 @@ def _require_loopback_client(request: Request, operation: str = "Credential sett
         )
 
 
+def _refuse_cross_origin(request: Request, detail: str) -> None:
+    origin = request.headers.get("origin")
+    if origin is not None and origin != f"{request.url.scheme}://{request.headers['host']}":
+        raise HTTPException(status_code=403, detail=detail)
+
+
 @app.get(
     "/api/v1/stocks/{symbol}/history",
     response_model=StockHistoryResponse,
@@ -203,9 +236,7 @@ def fetch_bars(
     symbol: str = Path(min_length=1),
 ) -> BarFetchResult:
     _require_loopback_client(request, "Daily bar fetches")
-    origin = request.headers.get("origin")
-    if origin is not None and origin != f"{request.url.scheme}://{request.headers['host']}":
-        raise HTTPException(status_code=403, detail="Cross-origin bar fetches are refused.")
+    _refuse_cross_origin(request, "Cross-origin bar fetches are refused.")
 
     try:
         result = fetch_daily_bars(symbol, options.start_date, options.end_date, refresh=options.refresh)
@@ -347,6 +378,18 @@ def save_credential_settings(
     )
 
 
+@app.post("/api/v1/shutdown", status_code=202)
+def shutdown(request: Request) -> ShutdownResponse:
+    _require_loopback_client(request, "Shutdowns")
+    _refuse_cross_origin(request, "Cross-origin shutdowns are refused.")
+    if not SERVER_STOP.request():
+        raise HTTPException(
+            status_code=409,
+            detail="This server was not started by ThetaDesk; stop it with Ctrl+C.",
+        )
+    return ShutdownResponse(stopping=True)
+
+
 FRONTEND = FilePath(__file__).resolve().parent / "frontend"
 
 
@@ -361,3 +404,18 @@ def dashboard_page() -> HTMLResponse:
 
 
 app.mount("/", StaticFiles(directory=FRONTEND), name="frontend")
+
+
+def serve(host: str, port: int) -> None:
+    """Run the dashboard until Ctrl+C or its Shut down button."""
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
+    SERVER_STOP.attach(server)
+    server.run()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Serve the ThetaDesk API and dashboard.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    options = parser.parse_args()
+    serve(options.host, options.port)

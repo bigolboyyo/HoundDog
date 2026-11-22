@@ -308,3 +308,42 @@ class StockHistoryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.headers["Retry-After"], "5")
         self.assertEqual(response.headers["X-RateLimit-Limit"], "20")
+
+
+class ShutdownApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import api
+        import uvicorn
+
+        self.stop = api.ServerStop()
+        patcher = patch.object(api, "SERVER_STOP", self.stop)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.server = uvicorn.Server(uvicorn.Config(app))
+        self.client = TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 50000))
+
+    def test_stops_a_server_started_by_serve(self) -> None:
+        self.stop.attach(self.server)
+
+        response = self.client.post("/api/v1/shutdown", headers={"Origin": "http://127.0.0.1:8000"})
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"stopping": True})
+        self.assertTrue(self.server.should_exit)
+
+    def test_says_how_to_stop_a_server_started_another_way(self) -> None:
+        response = self.client.post("/api/v1/shutdown")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Ctrl+C", response.json()["detail"])
+
+    def test_refuses_cross_origin_and_remote_callers(self) -> None:
+        self.stop.attach(self.server)
+        remote = TestClient(app, base_url="http://127.0.0.1:8000", client=("203.0.113.5", 50000))
+
+        cross_origin = self.client.post("/api/v1/shutdown", headers={"Origin": "https://example.com"})
+        from_elsewhere = remote.post("/api/v1/shutdown")
+
+        self.assertEqual(cross_origin.status_code, 403)
+        self.assertEqual(from_elsewhere.status_code, 403)
+        self.assertFalse(self.server.should_exit)

@@ -79,8 +79,7 @@ class StartProjectTests(unittest.TestCase):
             "1",
         )
         command = popen.call_args.args[0]
-        self.assertIn("uvicorn", command)
-        self.assertIn("api:app", command)
+        self.assertEqual(command[1:], ["api.py", "--host", "127.0.0.1", "--port", "8000"])
 
     @patch.dict("os.environ", {"THETADATA_API_KEY": "test-key"})
     def test_api_key_does_not_require_creds_file(self) -> None:

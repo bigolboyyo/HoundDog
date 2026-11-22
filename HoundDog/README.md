@@ -195,8 +195,10 @@ The optional dashboard is a dependency-free local web application.
 
 Double-click `HoundDog.exe` to start the server and open the dashboard. It
 uses the `watch.toml`, `watcher.db`, and exports beside the executable.
-Keep `watch.toml` with the executable if you move it. Press Ctrl+C in its
-console to stop the dashboard.
+Keep `watch.toml` with the executable if you move it. To stop the dashboard,
+click **Shut down** at the top of the page or press Ctrl+C in its console;
+either way a check in progress finishes first. The background job is separate
+and keeps running.
 
 Run `.\build_exe.ps1` from this folder to build or update the executable.
 The packaging dependencies live in `.venv-build`. A rebuild replaces the
@@ -307,7 +309,8 @@ only if every source fails during a one-shot run.
 
 - The page says "The dashboard server is out of date", or saving a setting
   reports "Unknown API endpoint": an old server is still running. Stop it with
-  `Ctrl+C` in its window and start `start_server.bat` again.
+  **Shut down** on its page or `Ctrl+C` in its window, and start
+  `start_server.bat` again.
 - Starting the server reports "Another HoundDog server is probably still
   running": the port is taken. If you cannot find the old window, PowerShell
   shows which process holds the port, and can stop it:

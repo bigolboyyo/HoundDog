@@ -870,6 +870,14 @@ class AutoChecker {
     this.onChange();
   }
 
+  // Stops checking from this tab without changing the saved interval.
+  stop() {
+    window.clearTimeout(this.timer);
+    this.timer = null;
+    this.nextAt = null;
+    this.minutes = 0;
+  }
+
   async run() {
     // Refresh first, so a job installed elsewhere pauses this tab. If the job
     // cannot be read, go by the last known mode rather than stop checking.
@@ -1810,6 +1818,22 @@ elements.topicForm.addEventListener("submit", async (event) => {
   } catch (error) {
     await reportConfigError(error);
   }
+});
+
+document.querySelector("#shutdown-confirm").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api("/api/shutdown", { method: "POST", body: "{}" });
+  } catch (error) {
+    showNotice(`Could not shut down: ${error.message}`);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  autoChecker.stop();
+  toolbar.show(null);
+  document.querySelector("#stopped").hidden = false;
 });
 
 document.querySelector("#reset-history-button").addEventListener("click", async () => {

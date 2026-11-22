@@ -75,6 +75,10 @@ instructions; this file is a quick architecture and maintenance map.
   both report the same items as new. The CLI and the background job are
   separate processes and share the saved-check SQLite transaction. It rechecks
   pending matches under the write lock to avoid duplicate detections.
+- `POST /api/shutdown` (the dashboard's Shut down button) ends `serve_forever`.
+  `DashboardServer.daemon_threads = False`, so `server_close` joins request
+  threads: a check or config write in progress finishes before the process
+  exits, on Ctrl+C too. The background job is a separate process and keeps running.
 - The background job: `TaskScheduler` (in `scheduled_task.py`) builds the task
   XML (`task_xml`: TimeTrigger repetition with no Duration, so indefinite;
   `IgnoreNew` so runs never overlap; allowed on battery; `StartWhenAvailable`)

@@ -230,9 +230,7 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
                 api_environment["THETADATA_REST_FALLBACK_ENABLED"]
             )
             os.chdir(PROJECT_ROOT)
-            import uvicorn
-
-            from api import app
+            from api import serve
 
             if open_browser:
                 threading.Thread(
@@ -240,20 +238,13 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
                     daemon=True,
                 ).start()
             print(f"Starting the API. Opening http://{API_HOST}:{API_PORT}/")
-            uvicorn.run(
-                app,
-                host=API_HOST,
-                port=API_PORT,
-                log_level="info",
-            )
+            serve(API_HOST, API_PORT)
             return 0
 
         api_process = subprocess.Popen(
             [
                 str(VENV_PYTHON),
-                "-m",
-                "uvicorn",
-                "api:app",
+                "api.py",
                 "--host",
                 API_HOST,
                 "--port",

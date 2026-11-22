@@ -7,6 +7,7 @@ from contextlib import closing, redirect_stderr, redirect_stdout
 import tempfile
 import threading
 import unittest
+from http import HTTPStatus
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,8 +43,8 @@ class ServerTestCase(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
         self.server = watcher_server.DashboardServer(("127.0.0.1", 0))
-        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        thread.start()
+        self.serve_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.serve_thread.start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.port = self.server.server_address[1]
@@ -144,6 +145,56 @@ class DashboardServerSecurityTests(ServerTestCase):
         self.assertEqual(response.status, 201)
         self.assertIn('url = "https://example.org/feed"', self.config_path.read_text(encoding="utf-8"))
         self.assertFalse(self.config_path.with_name("watch.toml.tmp").exists())
+
+
+class ShutdownTests(ServerTestCase):
+    def shutdown(self, headers=None):
+        return self.request(
+            "POST", "/api/shutdown", body="{}", headers={"Content-Type": "application/json", **(headers or {})}
+        )
+
+    def test_shutdown_stops_serving(self):
+        response, body = self.shutdown({"Origin": f"http://127.0.0.1:{self.port}"})
+
+        self.assertEqual(response.status, 202)
+        self.assertEqual(json.loads(body), {"stopping": True})
+        self.serve_thread.join(timeout=5)
+        self.assertFalse(self.serve_thread.is_alive())
+
+    def test_cross_origin_shutdown_is_refused(self):
+        response, _ = self.shutdown({"Origin": "https://example.com"})
+
+        self.assertEqual(response.status, 403)
+        self.assertTrue(self.serve_thread.is_alive())
+        response, _ = self.request("GET", "/api/dashboard")
+        self.assertEqual(response.status, 200)
+
+    def test_closing_waits_for_requests_in_progress(self):
+        started, release = threading.Event(), threading.Event()
+
+        def slow_get(handler):
+            started.set()
+            release.wait(5)
+            handler.send_json(HTTPStatus.OK, {"finished": True})
+
+        with patch.object(watcher_server.DashboardHandler, "do_GET", slow_get):
+            slow = {}
+            client = threading.Thread(target=lambda: slow.update(zip(("response", "body"), self.request("GET", "/"))))
+            client.start()
+            self.assertTrue(started.wait(5))
+            self.shutdown()
+            self.serve_thread.join(timeout=5)
+            closer = threading.Thread(target=self.server.server_close)
+            closer.start()
+            closer.join(timeout=0.3)
+            self.assertTrue(closer.is_alive(), "server_close returned while a request was still running")
+            release.set()
+            closer.join(timeout=5)
+            client.join(timeout=5)
+
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(slow["response"].status, 200)
+        self.assertEqual(json.loads(slow["body"]), {"finished": True})
 
 
 class ConfigSafetyTests(ServerTestCase):

@@ -57,6 +57,13 @@
         </svg>
         <span class="tool-label">Settings</span>
       </button>
+      <button class="tool-button" type="button" data-tool="shutdown" aria-controls="tool-shutdown" aria-expanded="false" title="Shut down HoundDog">
+        <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v9"></path>
+          <path d="M6.3 6.3a8 8 0 1 0 11.4 0"></path>
+        </svg>
+        <span class="tool-label">Shut down</span>
+      </button>
     </nav>
 
     <section id="tool-check" class="tool-flyout" aria-labelledby="tool-check-title" hidden>
@@ -131,6 +138,17 @@
       </div>
       <p class="tool-help">The last 100 checks. Previews and dry runs are listed too; they never change History.</p>
       <ol id="activity-list" class="tool-list"></ol>
+    </section>
+
+    <section id="tool-shutdown" class="tool-flyout tool-flyout-bottom tool-flyout-compact" aria-labelledby="tool-shutdown-title" hidden>
+      <div class="tool-flyout-heading">
+        <h2 id="tool-shutdown-title">Shut down HoundDog?</h2>
+      </div>
+      <p class="shutdown-hint">This page stops working until you start HoundDog again. The background job, if it is on, keeps checking.</p>
+      <div class="form-actions">
+        <button class="button button-secondary" type="button" data-close-tool>Cancel</button>
+        <button id="shutdown-confirm" class="button button-danger" type="button">Shut down</button>
+      </div>
     </section>
 
     <section id="tool-settings" class="tool-flyout tool-flyout-wide tool-flyout-bottom" aria-labelledby="tool-settings-title" hidden>
@@ -551,6 +569,13 @@
     </main>
 
     <div id="notice" class="notice" role="status" hidden></div>
+
+    <div id="stopped" class="stopped" role="alert" hidden>
+      <div class="stopped-message">
+        <h2>HoundDog has stopped</h2>
+        <p>You can close this tab. The background job, if it is on, keeps checking for news. Start HoundDog again from start.bat.</p>
+      </div>
+    </div>
 
     <script src="/app.js"></script>
   </body>

@@ -502,6 +502,25 @@ html[data-color-mode] body {
   box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
 }
 
+.stopped {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--pico-background-color);
+}
+
+.stopped[hidden] {
+  display: none;
+}
+
+.stopped-message {
+  max-width: 34rem;
+  text-align: center;
+}
+
 .tool-flyout {
   top: 16px;
   left: calc(var(--app-toolbar-width) + 8px);
@@ -523,6 +542,16 @@ html[data-color-mode] body {
 .tool-flyout-bottom {
   top: auto;
   bottom: 16px;
+}
+
+.tool-flyout-compact {
+  width: min(300px, calc(var(--app-viewport-width) - var(--app-toolbar-width) - 24px));
+}
+
+.shutdown-hint {
+  margin: 0;
+  color: var(--pico-muted-color);
+  font-size: 0.9rem;
 }
 
 #tool-settings {

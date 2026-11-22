@@ -19,6 +19,7 @@ function element() {
     },
     querySelectorAll() { return []; },
     setAttribute() {},
+    close() {},
   };
 }
 
@@ -59,4 +60,46 @@ test("history uses stored bars, renders session dates, and sends a one-time refr
   assert.equal(select("#chart-card").hidden, false);
   assert.match(select("#chart-accessible-description").textContent, /2024/);
   assert.equal(select("#history-table").querySelector("tbody").children[0].children[0].textContent, "2024-01-02");
+});
+
+function loadPage(fetch, confirm) {
+  const document = element();
+  const html = readFileSync(path.join(__dirname, "../frontend/index.html"), "utf8");
+  const ids = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
+  const query = document.querySelector.bind(document);
+  document.querySelector = selector => ids.has(selector.slice(1)) ? query(selector) : null;
+  document.createElement = element;
+  document.createElementNS = element;
+  const script = readFileSync(path.join(__dirname, "../frontend/app.js"), "utf8");
+  vm.runInNewContext(script, { document, fetch, window: { confirm } });
+  return selector => document.querySelector(selector);
+}
+
+test("shut down asks first, then covers the page once the server agrees", async () => {
+  const requests = [];
+  let answer = false;
+  const select = loadPage(async (url, options) => {
+    requests.push([url, options.method]);
+    return { ok: true, status: 202, json: async () => ({ stopping: true }) };
+  }, () => answer);
+
+  await select("#shutdown-button").listeners.click();
+  assert.deepEqual(requests, []);
+  assert.notEqual(select("#stopped").hidden, false);
+
+  answer = true;
+  await select("#shutdown-button").listeners.click();
+  assert.deepEqual(requests, [["/api/v1/shutdown", "POST"]]);
+  assert.equal(select("#stopped").hidden, false);
+});
+
+test("a refused shut down keeps the page and shows the reason", async () => {
+  const select = loadPage(async () => ({
+    ok: false, status: 409, json: async () => ({ detail: "This server was not started by ThetaDesk; stop it with Ctrl+C." }),
+  }), () => true);
+
+  await select("#shutdown-button").listeners.click();
+  assert.notEqual(select("#stopped").hidden, false);
+  assert.match(select("#request-message").textContent, /Could not shut down: .*Ctrl\+C/);
+  assert.equal(select("#shutdown-button").disabled, false);
 });

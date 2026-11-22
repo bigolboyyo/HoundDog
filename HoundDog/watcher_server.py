@@ -596,6 +596,9 @@ class DashboardServer(ThreadingHTTPServer):
     # in use, so a forgotten old server keeps answering requests. Bind
     # exclusively there so a second server fails with "address in use" instead.
     allow_reuse_address = os.name != "nt"
+    # Request threads are joined by server_close, so stopping the server (from the
+    # dashboard or with Ctrl+C) lets a running check or config write finish.
+    daemon_threads = False
 
     def __init__(self, address: tuple[str, int]) -> None:
         super().__init__(address, DashboardHandler)
@@ -837,6 +840,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.schedule_action(SCHEDULER.run_now)
                 return
 
+            if path == "/api/shutdown":
+                self.send_json(HTTPStatus.ACCEPTED, {"stopping": True})
+                # Ends serve_forever; main then waits for other requests in
+                # progress before exiting. The background job is unaffected.
+                self.server.shutdown()
+                return
+
             if path == "/api/import":
                 body = self.read_json(MAX_IMPORT_BYTES)
                 result = import_document(
@@ -1010,22 +1020,24 @@ def main(argv: Sequence[str] | None = None, *, open_browser: bool = False) -> in
     except OSError as error:
         print(
             f"error: cannot listen on {args.host}:{args.port} ({error.strerror or error}).\n"
-            "Another HoundDog server is probably still running. Stop it with Ctrl+C in "
-            "its window, or start this one with --port."
+            "Another HoundDog server is probably still running. Stop it with Shut down on "
+            "its dashboard or Ctrl+C in its window, or start this one with --port."
         )
         return 1
     address = server.server_address[1]
     url = f"http://{args.host}:{address}"
     print(f"HoundDog: {url}")
-    print("Stop with Ctrl+C.")
+    print("Stop with Shut down on the dashboard, or Ctrl+C.")
     try:
         if open_browser and not args.no_browser:
             threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nServer stopped.")
+        print()
     finally:
+        print("Stopping: waiting for requests in progress...")
         server.server_close()
+    print("Server stopped.")
     return 0
 
 

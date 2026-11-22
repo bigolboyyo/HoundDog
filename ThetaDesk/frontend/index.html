@@ -36,6 +36,7 @@
             />
           </svg>
         </button>
+        <button id="shutdown-button" class="shutdown-button" type="button">Shut down</button>
       </header>
 
       <main class="dashboard">
@@ -328,6 +329,12 @@
         <span>THETADATA · EOD HISTORY</span>
         <span id="quota-status">API quota updates after your first lookup</span>
       </footer>
+    </div>
+    <div id="stopped" class="stopped" role="alert" hidden>
+      <div class="stopped-message">
+        <h2>ThetaDesk has stopped</h2>
+        <p>You can close this tab. Start ThetaDesk again from start.bat.</p>
+      </div>
     </div>
     <script src="/app.js" defer></script>
   </body>

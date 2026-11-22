@@ -3,12 +3,22 @@
 Written 2026-11-22 after a first review of `ThetaData/`. `HoundDog/` is covered
 by `HoundDog/INTEGRATION.md`, which this plan builds on.
 
-Status (2026-11-22, evening): steps 1 and 2 are done. The ThetaData app was
-renamed `ThetaDesk/`. It has a daily bar store, a fetch CLI, an HTTP fetch
-endpoint, and a JSON Lines export. A live SDK run for AAPL, NVDA, and MSFT
-verified the store and an identical cached repeat. A workspace launcher and
-Windows executables for both apps were added. The bridge reader (step 3) is
-next. Older sections below say `ThetaData/`; read it as `ThetaDesk/`.
+Status (2026-11-22, evening): steps 1 to 5 are done.
+- The ThetaData app was renamed `ThetaDesk/`. It has a daily bar store, a fetch
+  CLI, an HTTP fetch endpoint, and a JSON Lines export.
+- A workspace launcher and Windows executables for both apps were added.
+- `bridge/` reads both exports, maps news to NYSE sessions, and runs the daily
+  study, from the command line or its dashboard (`server.py`, port 8090),
+  which also adds tickers and groups (see its README).
+
+- `start.bat` starts all three apps by default.
+- A demo (`bridge/make_demo.py`) shows the dashboard working with made-up news
+  around real prices, while real HoundDog data builds up.
+
+Next: let real data accumulate (the AAPL, MSFT, and TSLA topics exist since
+2026-11-22), and make the study's working visible on the dashboard (see
+"Making the study obvious" below). Older sections below say `ThetaData/`; read it as
+`ThetaDesk/`.
 
 ## Layout
 
@@ -17,7 +27,7 @@ theta_hound/
   HoundDog/     news producer (exports/hounddog-*.jsonl)
   ThetaDesk/    market data producer (exports/theta-bars-*.jsonl and theta-coverage-*.jsonl)
   launch.py     start.bat's chooser: starts either app's executable
-  bridge/       not yet: reads both outputs, joins, analyzes, combined dashboard
+  bridge/       reads both exports, maps news to NYSE sessions, daily study; CLI and dashboard (port 8090)
 ```
 
 Each producer can run on its own. The bridge joins their exports.
@@ -213,15 +223,13 @@ first live sample is 2 events.
 
 Open, not changed (decide or verify):
 
-1. **Two ThetaDesk data locations.** The source app keeps `market.db` and
-   `exports/` in `ThetaDesk/`. The executable keeps them in
-   `%LOCALAPPDATA%\ThetaDesk`, so rebuilding `dist` does not wipe them.
-   HoundDog's executable shares its source folder instead. The bridge must read
-   one place. Options:
-   - both ThetaDesk entry points use `%LOCALAPPDATA%\ThetaDesk`;
-   - or the bridge config names the folder.
-
-   Mixing the two entry points today splits the bar history.
+1. **Two ThetaDesk data locations. Fixed (14:35):** the source app and the
+   executable now share `%LOCALAPPDATA%\ThetaDesk` for `market.db` and
+   `exports/`, which survives rebuilds. The bridge reads
+   `%LOCALAPPDATA%\ThetaDesk\exports`. The source folder held no data, so
+   nothing moved. The real store there checks out: 251 AAPL daily bars
+   (2025-11-21 to 2026-11-20), no duplicates, no weekend sessions, and
+   consistent OHLC values.
 2. **A bar for today may be provisional.** `fetch_daily_bars` records a range
    as covered once a bar for its last day exists, and stored bars are never
    updated (`ON CONFLICT DO NOTHING`, even with `--refresh`). If the provider
@@ -250,11 +258,12 @@ Open, not changed (decide or verify):
    - build a second, windowless executable for the job;
    - or keep installing the job from source.
 
-   To check: whether your hourly job shows a window.
-8. **ThetaDesk keeps credentials in two places too.** The executable reads
-   `.env` and `creds.txt` beside `dist\ThetaDesk\ThetaDesk.exe`; the source app
-   reads them in `ThetaDesk\`. A first build has none, and changing one does
-   not change the other. Rebuilds carry the executable's copies over.
+   Not observed yet; the job is the user's choice and stays installed until
+   changed. Watch for a console window when the job runs from the executable.
+8. **Credentials stay beside the running app. Decided (14:31).** The user puts
+   `.env` and `creds.txt` beside `dist\ThetaDesk\ThetaDesk.exe`, or saves them
+   from Settings; rebuilds carry them over. A source run reads its own
+   `ThetaDesk\.env`, which is a developer setup.
 9. **CORS default.** CORS still allows `localhost:3000` by default
    (`FRONTEND_ORIGIN`). It is harmless after the host check, but remove it if
    no separate dev frontend is used.
@@ -288,10 +297,42 @@ Test status:
 2. **Done.** ThetaData: normalizer and `theta.bar/1`, then `market.db`, the fetch command,
    and the export. Tests with recorded SDK and REST responses, like HoundDog's
    fakes.
-3. **Next.** Settle review items 1 and 2 above first. Bridge reader: config, symbol mapping, deduplicated loading of both exports,
-   and session mapping. Tests with small fixture files.
-4. Daily event study and a plain report (CLI first).
-5. Combined dashboard.
+3. **Done.** Bridge reader: `bridge.toml`, symbols with their HoundDog topics,
+   deduplicated loading of both exports, and an NYSE calendar
+   (`market_calendar.py`) that matches all 251 real AAPL sessions.
+4. **Done.** Daily study and report (`bridge.py report`, `--json`). Quiet
+   sessions count only when HoundDog watched the symbol's topic. Decisions
+   made in building it:
+   - the standard library only, plus `tzdata`; no pandas or Polars yet;
+   - no bridge database; it rereads the daily files, which are small;
+   - a session counts as watched after one check in its window.
+5. **Done.** Bridge dashboard (FastAPI, `bridge/server.py`, port 8090): both
+   apps' status, the study per ticker and group, a price chart with news
+   sessions marked, and "watch tickers". Watching creates one HoundDog topic
+   per ticker through HoundDog's API and records the ticker, and any group, in
+   `bridge.toml`. A group is a bridge-only set of tickers whose sessions are
+   pooled. It is never a single HoundDog topic, so news about one company
+   never counts for another.
+6. **Done.** Cleanup pass on the bridge and launcher. Fixed:
+   - a ticker listed twice replaced or double-counted silently;
+   - rewriting `bridge.toml` dropped unknown tables;
+   - existing HoundDog topics were recognised by message text; now by status
+     409;
+   - the browser could keep a stale `app.js`; assets are now versioned by
+     content hash;
+   - the watched-session test scanned every check (now a binary search);
+   - prices without coverage records produced an empty study with no
+     explanation.
+7. **Done.** Demo dataset (`bridge/make_demo.py`, output in `bridge/demo/`,
+   not in git): a year of `[DEMO]` news and checks around real ThetaDesk
+   prices, planted on big-move days. Its config has no HoundDog connection
+   (`[hounddog] url = ""`) and shows a banner (`[display] banner`).
+8. **Next.** Making the study obvious on the dashboard:
+   - a session-by-session table with the reason for each label;
+   - a count breakdown per ticker;
+   - plain-language article placement, including excluded articles;
+   - a one-line verdict per ticker;
+   - a "how to read this" box.
 
 Later, outside the MVP:
 

@@ -77,3 +77,15 @@ exclude = ["crypto"]
 [[topics]]
 name = "Breaking"
 keywords = ["breaking", "outage", "new", "underway", "trump", "putin", "xi", "trilateral"]
+
+[[topics]]
+name = "AAPL"
+keywords = ["AAPL", "apple", "iphone", "steve", "jobs", "macbook"]
+
+[[topics]]
+name = "MSFT"
+keywords = ["MSFT", "bill", "gates", "xbox", "vaccine", "windows"]
+
+[[topics]]
+name = "TSLA"
+keywords = ["TSLA", "elon", "musk", "maga", "spacex"]

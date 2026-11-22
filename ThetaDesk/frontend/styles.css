@@ -134,6 +134,52 @@ button {
   color: var(--accent);
 }
 
+.shutdown-button {
+  flex: none;
+  height: 34px;
+  margin-left: 10px;
+  padding: 0 12px;
+  border: 1px solid #354239;
+  border-radius: 8px;
+  background: #202a23;
+  color: #b6c4b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.shutdown-button:hover,
+.shutdown-button:focus-visible {
+  border-color: var(--danger);
+  outline: none;
+  color: var(--danger);
+}
+
+.shutdown-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.stopped {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #101512;
+}
+
+.stopped[hidden] {
+  display: none;
+}
+
+.stopped-message {
+  max-width: 34rem;
+  text-align: center;
+  color: var(--soft);
+}
+
 .settings-button svg {
   width: 17px;
   height: 17px;
