@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dotenv import dotenv_values
+import httpx
 import pandas as pd
 import polars as pl
 from fastapi.testclient import TestClient
@@ -144,91 +145,119 @@ class StockHistoryApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertNotIn("api_key", response.text)
 
-    def test_reads_credentials_from_active_app_folder(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            dotenv_path = Path(temporary_directory) / ".env"
-            dotenv_path.write_text(
-                "THETADATA_API_KEY=test-api-key\n",
-                encoding="utf-8",
-            )
-            (dotenv_path.parent / "creds.txt").write_text(
-                "user@example.test\ntest-password\n",
-                encoding="utf-8",
-            )
-            with (
-                patch("api.get_dotenv_path", return_value=dotenv_path),
-                patch.dict(os.environ, {"THETADATA_API_KEY": ""}),
-            ):
-                response = self.client.get("/api/v1/settings/credentials")
+    def credentials_folder(self) -> tuple[Path, Path]:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        dotenv_path = Path(directory.name) / ".env"
+        for patcher in (
+            patch("api.get_dotenv_path", return_value=dotenv_path),
+            patch.dict(os.environ, {"THETADATA_API_KEY": ""}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return dotenv_path, dotenv_path.with_name("creds.txt")
+
+    def save(self, **fields: object) -> httpx.Response:
+        return self.client.put("/api/v1/settings/credentials", json=fields)
+
+    def test_reports_what_is_saved_without_sending_secrets(self) -> None:
+        dotenv_path, credentials_path = self.credentials_folder()
+        dotenv_path.write_text("THETADATA_API_KEY=test-api-key\n", encoding="utf-8")
+        credentials_path.write_text("user@example.test\ntest-password\n", encoding="utf-8")
+
+        response = self.client.get("/api/v1/settings/credentials")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            {
-                "api_key": "test-api-key",
-                "email": "user@example.test",
-                "password": "test-password",
-            },
-        )
+        self.assertEqual(response.json(), {
+            "api_key_configured": True, "credentials_configured": True, "email": "user@example.test",
+        })
+        self.assertNotIn("test-api-key", response.text)
+        self.assertNotIn("test-password", response.text)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
-    def test_saves_and_clears_credentials_in_active_app_folder(self) -> None:
+    def test_blank_fields_keep_what_is_saved(self) -> None:
+        dotenv_path, credentials_path = self.credentials_folder()
+        self.assertEqual(self.save(api_key="test-api-key", email="user@example.test", password="test-password")
+                         .status_code, 200)
+
+        kept = self.save(api_key="", email="", password="")
+
+        self.assertEqual(kept.status_code, 200)
+        self.assertEqual(kept.json(), {
+            "saved": True, "api_key_configured": True, "credentials_configured": True, "email": "user@example.test",
+        })
+        self.assertEqual(dotenv_values(dotenv_path)["THETADATA_API_KEY"], "test-api-key")
+        self.assertEqual(credentials_path.read_text(encoding="utf-8").splitlines(),
+                         ["user@example.test", "test-password"])
+
+    def test_changing_the_email_keeps_the_saved_password(self) -> None:
+        _, credentials_path = self.credentials_folder()
+        self.save(email="user@example.test", password="test-password")
+
+        changed = self.save(email="other@example.test")
+
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(credentials_path.read_text(encoding="utf-8").splitlines(),
+                         ["other@example.test", "test-password"])
+        self.assertFalse(credentials_path.with_name("creds.txt.tmp").exists())
+
+    def test_clearing_removes_only_what_was_asked(self) -> None:
+        dotenv_path, credentials_path = self.credentials_folder()
+        self.save(api_key="test-api-key", email="user@example.test", password="test-password")
+
+        without_account = self.save(clear_credentials=True)
+        self.assertFalse(credentials_path.exists())
+        self.assertEqual(dotenv_values(dotenv_path)["THETADATA_API_KEY"], "test-api-key")
+        without_key = self.save(clear_api_key=True)
+
+        self.assertEqual(without_account.json()["credentials_configured"], False)
+        self.assertEqual(without_key.json(), {
+            "saved": True, "api_key_configured": False, "credentials_configured": False, "email": "",
+        })
+        self.assertNotIn("THETADATA_API_KEY", dotenv_values(dotenv_path))
+
+    def test_refuses_incomplete_or_contradictory_changes(self) -> None:
+        dotenv_path, _ = self.credentials_folder()
+
+        cases = {
+            "an email with no saved password": {"email": "user@example.test"},
+            "a password with no email": {"password": "test-password"},
+            "a new key and a clear": {"api_key": "test-api-key", "clear_api_key": True},
+            "new account details and a clear": {"email": "user@example.test", "password": "x", "clear_credentials": True},
+            "a key on two lines": {"api_key": "one\ntwo"},
+        }
+        for case, fields in cases.items():
+            with self.subTest(case):
+                self.assertEqual(self.save(**fields).status_code, 422)
+        self.assertFalse(dotenv_path.exists())
+
+    def test_credentials_are_not_readable_or_writable_from_another_site(self) -> None:
+        # A page from a local dev server (Next.js and others default to port 3000).
+        other_site = {"Origin": "http://localhost:3000"}
         with tempfile.TemporaryDirectory() as temporary_directory:
             dotenv_path = Path(temporary_directory) / ".env"
-            credentials_path = dotenv_path.with_name("creds.txt")
+            dotenv_path.write_text("THETADATA_API_KEY=test-api-key\n", encoding="utf-8")
             with (
                 patch("api.get_dotenv_path", return_value=dotenv_path),
                 patch.dict(os.environ, {"THETADATA_API_KEY": ""}),
             ):
-                saved = self.client.put(
+                read = self.client.get("/api/v1/settings/credentials", headers=other_site)
+                write = self.client.put(
                     "/api/v1/settings/credentials",
-                    json={
-                        "api_key": "test-api-key",
-                        "email": "user@example.test",
-                        "password": "test-password",
-                    },
+                    json={"api_key": "attacker-key", "email": "", "password": ""},
+                    headers=other_site,
                 )
-                self.assertEqual(saved.status_code, 200)
-                self.assertEqual(
-                    dotenv_values(dotenv_path)["THETADATA_API_KEY"],
-                    "test-api-key",
+                same_site = self.client.get(
+                    "/api/v1/settings/credentials", headers={"Origin": "http://127.0.0.1:8000"},
                 )
-                self.assertEqual(
-                    credentials_path.read_text(encoding="utf-8").splitlines(),
-                    ["user@example.test", "test-password"],
-                )
+            saved = dotenv_path.read_text(encoding="utf-8")
 
-                cleared = self.client.put(
-                    "/api/v1/settings/credentials",
-                    json={"api_key": "", "email": "", "password": ""},
-                )
-
-            self.assertEqual(cleared.status_code, 200)
-            self.assertFalse(credentials_path.exists())
-            self.assertNotIn(
-                "THETADATA_API_KEY",
-                dotenv_values(dotenv_path),
-            )
-
-    def test_rejects_incomplete_email_password_credentials(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            dotenv_path = Path(temporary_directory) / ".env"
-            with patch("api.get_dotenv_path", return_value=dotenv_path):
-                response = self.client.put(
-                    "/api/v1/settings/credentials",
-                    json={
-                        "api_key": "",
-                        "email": "user@example.test",
-                        "password": "",
-                    },
-                )
-
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(
-            response.json()["detail"],
-            "Provide both email and password, or leave both blank.",
-        )
-        self.assertFalse(dotenv_path.exists())
+        self.assertEqual(read.status_code, 403)
+        self.assertNotIn("test-api-key", read.text)
+        self.assertNotIn("access-control-allow-origin", read.headers)
+        self.assertEqual(write.status_code, 403)
+        self.assertIn("test-api-key", saved)
+        self.assertEqual(same_site.status_code, 200)
 
     def test_denies_credential_settings_to_non_loopback_clients(self) -> None:
         client = TestClient(app, base_url="http://127.0.0.1:8000", client=("192.0.2.1", 50000))
@@ -347,3 +376,76 @@ class ShutdownApiTests(unittest.TestCase):
         self.assertEqual(cross_origin.status_code, 403)
         self.assertEqual(from_elsewhere.status_code, 403)
         self.assertFalse(self.server.should_exit)
+
+
+class StoredDataAndPinApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        patcher = patch("market_store.default_data_directory", return_value=Path(directory.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.client = TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 50000))
+        self.origin = {"Origin": "http://127.0.0.1:8000"}
+
+    def load_bars(self) -> None:
+        rows = [{"date": date(2024, 1, day), "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10}
+                for day in (2, 3, 5)]
+        with patch("market_store.fetch_stock_history", return_value=StockHistory("sdk", rows)):
+            response = self.client.post(
+                "/api/v1/stocks/AAPL/bars/fetch",
+                json={"start_date": "2024-01-02", "end_date": "2024-01-05"}, headers=self.origin,
+            )
+        self.assertEqual(response.status_code, 200)
+
+    def test_lists_loaded_tickers_and_serves_their_stored_bars(self) -> None:
+        self.assertEqual(self.client.get("/api/v1/stocks/loaded").json(), {"symbols": []})
+        self.load_bars()
+
+        loaded = self.client.get("/api/v1/stocks/loaded").json()["symbols"]
+        with patch("market_store.fetch_stock_history") as provider:
+            bars = self.client.get("/api/v1/stocks/aapl/bars?start_date=2024-01-03&end_date=2024-01-05")
+
+        provider.assert_not_called()
+        self.assertEqual(loaded, [{"symbol": "AAPL", "interval": "1d", "bars": 3,
+                                   "first_session": "2024-01-02", "last_session": "2024-01-05"}])
+        self.assertEqual(bars.status_code, 200)
+        self.assertEqual(bars.json()["symbol"], "AAPL")
+        self.assertEqual([row["session_date"] for row in bars.json()["data"]], ["2024-01-03", "2024-01-05"])
+        self.assertEqual(
+            self.client.get("/api/v1/stocks/AAPL/bars?start_date=2024-01-05&end_date=2024-01-02").status_code, 422
+        )
+
+    def test_pins_are_saved_listed_and_removed(self) -> None:
+        pin = {"symbol": "aapl", "start_date": "2024-01-02", "end_date": "2024-01-05"}
+
+        created = self.client.post("/api/v1/pins", json=pin, headers=self.origin)
+        self.client.post("/api/v1/pins", json={**pin, "symbol": "MSFT"}, headers=self.origin)
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json(), {**pin, "symbol": "AAPL"})
+        self.assertEqual([item["symbol"] for item in self.client.get("/api/v1/pins").json()["pins"]], ["AAPL", "MSFT"])
+        removed = self.client.delete("/api/v1/pins/AAPL/2024-01-02/2024-01-05", headers=self.origin)
+        self.assertEqual(removed.json(), {"removed": 1})
+        self.assertEqual(self.client.delete("/api/v1/pins", headers=self.origin).json(), {"removed": 1})
+        self.assertEqual(self.client.get("/api/v1/pins").json(), {"pins": []})
+
+    def test_pin_changes_refuse_other_sites_and_machines(self) -> None:
+        pin = {"symbol": "AAPL", "start_date": "2024-01-02", "end_date": "2024-01-05"}
+        remote = TestClient(app, base_url="http://127.0.0.1:8000", client=("203.0.113.5", 50000))
+        cross_site = {"Origin": "https://example.com"}
+
+        self.assertEqual(self.client.post("/api/v1/pins", json=pin, headers=cross_site).status_code, 403)
+        self.assertEqual(remote.post("/api/v1/pins", json=pin).status_code, 403)
+        self.client.post("/api/v1/pins", json=pin, headers=self.origin)
+        self.assertEqual(self.client.delete("/api/v1/pins", headers=cross_site).status_code, 403)
+        self.assertEqual(remote.delete("/api/v1/pins/AAPL/2024-01-02/2024-01-05").status_code, 403)
+        self.assertEqual(len(self.client.get("/api/v1/pins").json()["pins"]), 1)
+
+    def test_a_pin_with_reversed_dates_is_refused(self) -> None:
+        response = self.client.post(
+            "/api/v1/pins", json={"symbol": "AAPL", "start_date": "2024-01-05", "end_date": "2024-01-02"},
+            headers=self.origin,
+        )
+        self.assertEqual(response.status_code, 422)
+

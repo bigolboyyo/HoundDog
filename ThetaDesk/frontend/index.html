@@ -185,6 +185,7 @@
           </div>
           <p class="pin-description">
             Save a timeline with its latest close, period high, and period low.
+            Pins are kept in ThetaDesk and redrawn from your saved prices.
           </p>
           <div id="pins-list" class="pins-list">
             <div id="empty-pins" class="empty-pins">
@@ -192,6 +193,16 @@
               <p>No pinned summaries yet</p>
               <span>Use “Pin summary” on a timeline to save one.</span>
             </div>
+          </div>
+          <div class="loaded-heading">
+            <p class="eyebrow">SAVED PRICES</p>
+            <h2 id="loaded-title">Loaded tickers</h2>
+          </div>
+          <p class="pin-description">
+            Prices you have already loaded. Open one to view it without calling ThetaData.
+          </p>
+          <div id="loaded-list" class="loaded-list" aria-labelledby="loaded-title">
+            <p id="empty-loaded" class="empty-loaded">Nothing loaded yet. Load a ticker's history to keep it here.</p>
           </div>
           <div class="pin-panel-footer">
             <span class="footer-mark" aria-hidden="true">T</span>
@@ -279,6 +290,9 @@
               spellcheck="false"
             />
           </label>
+          <button id="clear-api-key" class="text-button settings-clear" type="button" hidden>
+            Remove saved API key
+          </button>
           <div class="settings-divider">
             <span>or use account credentials</span>
           </div>
@@ -301,10 +315,13 @@
               autocomplete="off"
             />
           </label>
+          <button id="clear-credentials" class="text-button settings-clear" type="button" hidden>
+            Remove saved account
+          </button>
           <p class="settings-hint">
-            Leave a credential method blank to remove it. Python SDK changes
-            apply on the next request; restart ThetaData Terminal to apply
-            account changes to the REST backup.
+            Saved secrets are never shown. Leave a field blank to keep what is
+            saved. Python SDK changes apply on the next request; restart
+            ThetaData Terminal to apply account changes to the REST backup.
           </p>
           <p
             id="settings-status"

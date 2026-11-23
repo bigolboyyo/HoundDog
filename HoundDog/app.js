@@ -951,7 +951,8 @@ const settingsForms = [
   }, "Event export setting saved."),
 ];
 
-const MAX_IMPORT_BYTES = 25 * 1024 * 1024;
+// The server's limit: export never produces a larger backup.
+const MAX_IMPORT_BYTES = 1024 * 1024 * 1024;
 
 elements.importButton.addEventListener("click", async () => {
   const file = elements.importFile.files[0];
@@ -962,7 +963,7 @@ elements.importButton.addEventListener("click", async () => {
     return;
   }
   if (file.size > MAX_IMPORT_BYTES) {
-    showNotice("That file is larger than 25 MB.");
+    showNotice("That file is larger than 1 GB, so it is not a HoundDog backup.");
     return;
   }
   const effects = [

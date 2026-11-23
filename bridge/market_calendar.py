@@ -133,6 +133,13 @@ class NyseCalendar:
             day -= ONE_DAY
         return day
 
+    def latest_closed_session(self, moment: datetime) -> date:
+        local = moment.astimezone(self.zone)
+        day = local.date()
+        if self.is_trading_day(day) and local >= self.session(day).close_at:
+            return day
+        return self.previous_trading_day(day)
+
     def trading_days(self, first: date, last: date) -> list[date]:
         days = []
         day = first

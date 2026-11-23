@@ -153,11 +153,13 @@ class MarketStoreTests(unittest.TestCase):
 
     @patch("market_store.fetch_stock_history")
     def test_empty_current_day_is_retried_when_the_report_arrives(self, provider):
-        today = datetime.now(market_store.EASTERN).date()
+        today = JAN_5
         provider.side_effect = [
             StockHistory("sdk", []),
             StockHistory("sdk", [sdk_row(today)]),
         ]
+        evening = datetime(2024, 1, 5, 19, 0, tzinfo=market_store.EASTERN)
+        self.enterContext(patch("market_store._now", return_value=evening))
         self.assertIsNone(self.fetch(today, today).covered_through)
         self.assertEqual(self.exported_coverage(), [])
         self.assertEqual(self.fetch(today, today).covered_through, today)
@@ -254,3 +256,124 @@ class MarketStoreTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual([json.loads(line)["symbol"] for line in stdout.getvalue().splitlines()], ["AAPL", "MSFT"])
         self.assertIn("BAD: no such ticker", stderr.getvalue())
+
+
+class PricePolicyTests(unittest.TestCase):
+    """Impossible prices are refused, and today's bar waits for the final report."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+
+    def fetch_at(self, moment, rows, first=JAN_2, last=JAN_5):
+        with (
+            patch("market_store._now", return_value=moment),
+            patch("market_store.fetch_stock_history", side_effect=lambda symbol, start, end: StockHistory(
+                "sdk", [row for row in rows if start <= row["date"] <= end])) as provider,
+        ):
+            result = market_store.fetch_daily_bars("AAPL", first, last, data_dir=self.directory)
+        return result, provider
+
+    def test_impossible_prices_are_refused_and_nothing_is_stored(self):
+        cases = {
+            "high below low": {"high": 180.0, "low": 185.0},
+            "close above high": {"close": 190.0},
+            "open below low": {"open": 180.0},
+            "zero price": {"low": 0.0},
+            "negative price": {"open": -1.0},
+        }
+        later = datetime(2024, 1, 8, 12, 0, tzinfo=market_store.EASTERN)
+        for case, change in cases.items():
+            with self.subTest(case), self.assertRaises(market_store.HistoryFormatError):
+                self.fetch_at(later, [{**sdk_row(JAN_2), **change}])
+        self.assertEqual(market_store.stored_daily_bars("AAPL", JAN_2, JAN_5, data_dir=self.directory), [])
+
+    def test_a_valid_bar_at_its_limits_is_kept(self):
+        later = datetime(2024, 1, 8, 12, 0, tzinfo=market_store.EASTERN)
+        flat = {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0}
+
+        result, _ = self.fetch_at(later, [{**sdk_row(JAN_2), **flat}])
+
+        self.assertEqual(len(result.data), 1)
+
+    def test_todays_bar_is_not_stored_before_the_report_is_final(self):
+        afternoon = datetime(2024, 1, 5, 16, 30, tzinfo=market_store.EASTERN)
+        evening = datetime(2024, 1, 5, 18, 0, tzinfo=market_store.EASTERN)
+        rows = [sdk_row(JAN_4), sdk_row(JAN_5)]
+
+        early, _ = self.fetch_at(afternoon, rows, JAN_4, JAN_5)
+        final, provider = self.fetch_at(evening, rows, JAN_4, JAN_5)
+
+        self.assertEqual([bar["session_date"] for bar in early.data], ["2024-01-04"])
+        self.assertEqual(early.covered_through, JAN_4)
+        provider.assert_called_once_with("AAPL", JAN_5, JAN_5)
+        self.assertEqual([bar["session_date"] for bar in final.data], ["2024-01-04", "2024-01-05"])
+        self.assertEqual(final.covered_through, JAN_5)
+
+
+class StoredDataAndPinTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+
+    def load(self, symbol, first, last, sessions):
+        with patch("market_store.fetch_stock_history", return_value=StockHistory("sdk", [sdk_row(day) for day in sessions])):
+            market_store.fetch_daily_bars(symbol, first, last, data_dir=self.directory)
+
+    def test_lists_loaded_tickers_with_the_sessions_they_span(self):
+        self.assertEqual(market_store.loaded_symbols(data_dir=self.directory), [])
+        self.load("msft", JAN_2, JAN_5, [JAN_3, JAN_4])
+        self.load("AAPL", JAN_2, JAN_5, [JAN_2, JAN_3, JAN_5])
+
+        self.assertEqual(market_store.loaded_symbols(data_dir=self.directory), [
+            market_store.LoadedSymbol("AAPL", "1d", 3, JAN_2, JAN_5),
+            market_store.LoadedSymbol("MSFT", "1d", 2, JAN_3, JAN_4),
+        ])
+
+    def test_stored_bars_never_call_thetadata(self):
+        self.load("AAPL", JAN_2, JAN_5, [JAN_2, JAN_3, JAN_5])
+
+        with patch("market_store.fetch_stock_history") as provider:
+            rows = market_store.stored_daily_bars(" aapl ", JAN_3, date(2024, 1, 31), data_dir=self.directory)
+
+        provider.assert_not_called()
+        self.assertEqual([row["session_date"] for row in rows], ["2024-01-03", "2024-01-05"])
+        with self.assertRaises(ValueError):
+            market_store.stored_daily_bars("AAPL", JAN_5, JAN_2, data_dir=self.directory)
+
+    def test_pins_keep_their_dates_and_order_and_can_be_removed(self):
+        first = market_store.add_pin(" aapl ", JAN_2, JAN_5, data_dir=self.directory)
+        market_store.add_pin("MSFT", JAN_3, JAN_4, data_dir=self.directory)
+        market_store.add_pin("AAPL", JAN_2, JAN_5, data_dir=self.directory)  # already pinned
+        market_store.add_pin("AAPL", JAN_3, JAN_5, data_dir=self.directory)  # other dates, another pin
+
+        self.assertEqual(first, market_store.Pin("AAPL", JAN_2, JAN_5))
+        self.assertEqual(market_store.list_pins(data_dir=self.directory), [
+            market_store.Pin("AAPL", JAN_2, JAN_5),
+            market_store.Pin("MSFT", JAN_3, JAN_4),
+            market_store.Pin("AAPL", JAN_3, JAN_5),
+        ])
+
+        self.assertEqual(market_store.remove_pins(market_store.Pin("msft", JAN_3, JAN_4), data_dir=self.directory), 1)
+        self.assertEqual(market_store.remove_pins(market_store.Pin("MSFT", JAN_3, JAN_4), data_dir=self.directory), 0)
+        self.assertEqual(len(market_store.list_pins(data_dir=self.directory)), 2)
+        self.assertEqual(market_store.remove_pins(data_dir=self.directory), 2)
+        self.assertEqual(market_store.list_pins(data_dir=self.directory), [])
+
+    def test_a_pin_needs_a_ticker_and_ordered_dates(self):
+        with self.assertRaises(ValueError):
+            market_store.add_pin("  ", JAN_2, JAN_5, data_dir=self.directory)
+        with self.assertRaises(ValueError):
+            market_store.add_pin("AAPL", JAN_5, JAN_2, data_dir=self.directory)
+
+    def test_pins_do_not_touch_bars_or_the_export(self):
+        self.load("AAPL", JAN_2, JAN_5, [JAN_2])
+        exported = sorted(path.read_bytes() for path in (self.directory / "exports").glob("*.jsonl"))
+
+        market_store.add_pin("AAPL", JAN_2, JAN_5, data_dir=self.directory)
+        market_store.remove_pins(data_dir=self.directory)
+
+        self.assertEqual(sorted(path.read_bytes() for path in (self.directory / "exports").glob("*.jsonl")), exported)
+        self.assertEqual(len(market_store.stored_daily_bars("AAPL", JAN_2, JAN_5, data_dir=self.directory)), 1)

@@ -26,14 +26,18 @@ REQUIREMENTS_HASH_FILE = VENV_DIRECTORY / ".requirements.sha256"
 TERMINAL_JAR = PROJECT_ROOT / "ThetaTerminal.jar"
 API_HOST = "127.0.0.1"
 API_PORT = 8000
+# Seconds the API may take to finish its requests after Ctrl+C before it is stopped.
+API_SHUTDOWN_GRACE_SECONDS = 60
 TERMINAL_HOST = "127.0.0.1"
 TERMINAL_PORT = 25510
 TERMINAL_STARTUP_TIMEOUT = 60
+# The pinned thetadata SDK declares Requires-Python >= 3.12.
+MINIMUM_PYTHON = (3, 12)
 
 
 def _python_version_supported() -> bool:
     version = tuple(int(part) for part in platform.python_version_tuple()[:2])
-    return version >= (3, 10)
+    return version >= MINIMUM_PYTHON
 
 
 def _run_checked(command: list[str]) -> None:
@@ -117,7 +121,16 @@ def _ask_to_start_terminal() -> bool:
     return answer in {"y", "yes"}
 
 
-def _stop_process(process: subprocess.Popen[bytes]) -> None:
+def _stop_process(process: subprocess.Popen[bytes], grace_seconds: float = 0) -> None:
+    """Stop a child process. With a grace period it may first exit by itself:
+    on Ctrl+C the console interrupts the API too, and the API then finishes
+    its requests in progress. A second Ctrl+C stops it at once."""
+    if grace_seconds and process.poll() is None:
+        print("Waiting for the API to finish requests in progress (Ctrl+C again to stop now)...")
+        try:
+            process.wait(timeout=grace_seconds)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            pass
     if process.poll() is not None:
         return
 
@@ -187,10 +200,11 @@ def _open_browser_when_ready() -> None:
 
 def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
     if not IS_FROZEN and not _python_version_supported():
-        print("Python 3.10 or newer is required to start this project.")
+        print(f"Python {MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]} or newer is required to start this project.")
         return 1
 
     api_process: subprocess.Popen[bytes] | None = None
+    interrupted = False
     terminal_process: subprocess.Popen[bytes] | None = None
     try:
         if not IS_FROZEN:
@@ -255,6 +269,7 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
         )
         return api_process.wait()
     except KeyboardInterrupt:
+        interrupted = True
         print("\nStopping the project...")
         return 130
     except (OSError, RuntimeError, subprocess.CalledProcessError) as error:
@@ -262,7 +277,7 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
         return 1
     finally:
         if api_process is not None:
-            _stop_process(api_process)
+            _stop_process(api_process, API_SHUTDOWN_GRACE_SECONDS if interrupted else 0)
         if terminal_process is not None:
             _stop_process(terminal_process)
 

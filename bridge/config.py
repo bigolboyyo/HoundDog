@@ -14,11 +14,13 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from study import StudySymbol, SymbolGroup
 
 DEFAULT_CONFIG = Path(__file__).resolve().with_name("bridge.toml")
 DEFAULT_HOUNDDOG_URL = "http://127.0.0.1:8080"
+DEFAULT_THETADESK_URL = "http://127.0.0.1:8000"
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.^_-]{1,16}$")
 HEADER = """# theta_hound bridge settings. Paths are relative to this file.
 # The bridge dashboard rewrites this file when it adds tickers or groups.
@@ -27,6 +29,7 @@ HEADER = """# theta_hound bridge settings. Paths are relative to this file.
 # [[symbols]]: a ticker and the HoundDog topics that count as news about it.
 # [[groups]]: a named set of tickers, studied together.
 # [hounddog] url = "" turns off the HoundDog connection (watching tickers).
+# [thetadesk] url = "" turns off price loading and pins.
 # [display] banner: a line shown across the top of the dashboard.
 """
 CONFIG_LOCK = threading.Lock()
@@ -44,6 +47,7 @@ class BridgeConfig:
     symbols: tuple[StudySymbol, ...]
     groups: tuple[SymbolGroup, ...]
     banner: str
+    thetadesk_url: str = DEFAULT_THETADESK_URL
 
     @classmethod
     def load(cls, path: Path) -> BridgeConfig:
@@ -76,6 +80,7 @@ class BridgeConfig:
             symbols=tuple(symbols),
             groups=tuple(groups),
             banner=str(raw.get("display", {}).get("banner", "")).strip(),
+            thetadesk_url=thetadesk_url(raw.get("thetadesk", {}), use_default=not thetadesk),
         )
 
 
@@ -109,7 +114,29 @@ def read_raw(path: Path) -> dict[str, Any]:
         raise ConfigError(f"{path}: {error}") from error
 
 
-TABLE_ORDER = ("inputs", "hounddog", "display", "symbols", "groups")
+def thetadesk_url(settings: Any, *, use_default: bool) -> str:
+    if not isinstance(settings, dict):
+        raise ConfigError("[thetadesk] must be a table")
+    url = settings.get("url", DEFAULT_THETADESK_URL if use_default else "")
+    message = "[thetadesk] url must be an HTTP loopback address with a port, or empty"
+    if not isinstance(url, str):
+        raise ConfigError(message)
+    if not url:
+        return ""
+    try:
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"}
+            and parsed.port and parsed.netloc == f"{parsed.hostname}:{parsed.port}"
+            and parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
+        ):
+            return f"http://{parsed.netloc}"
+    except ValueError:
+        pass
+    raise ConfigError(message)
+
+
+TABLE_ORDER = ("inputs", "hounddog", "thetadesk", "display", "symbols", "groups")
 
 
 def toml_value(value: Any) -> str:
@@ -125,8 +152,12 @@ def toml_value(value: Any) -> str:
     raise ConfigError(f"cannot write {type(value).__name__} to bridge.toml")
 
 
+def toml_key(key: str) -> str:
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else toml_value(key)
+
+
 def table_lines(header: str, table: dict[str, Any]) -> list[str]:
-    return [header, *(f"{key} = {toml_value(value)}" for key, value in table.items()), ""]
+    return [header, *(f"{toml_key(key)} = {toml_value(value)}" for key, value in table.items()), ""]
 
 
 def render_raw(raw: dict[str, Any]) -> str:
@@ -137,10 +168,10 @@ def render_raw(raw: dict[str, Any]) -> str:
     for name in [*TABLE_ORDER, *sorted(set(raw) - set(TABLE_ORDER))]:
         value = raw.get(name)
         if isinstance(value, dict):
-            lines.extend(table_lines(f"[{name}]", value))
+            lines.extend(table_lines(f"[{toml_key(name)}]", value))
         elif isinstance(value, list) and all(isinstance(entry, dict) for entry in value):
             for entry in value:
-                lines.extend(table_lines(f"[[{name}]]", entry))
+                lines.extend(table_lines(f"[[{toml_key(name)}]]", entry))
         elif value is not None:
             raise ConfigError(f"bridge.toml: top-level {name!r} must be a table")
     return "\n".join(lines)
@@ -148,8 +179,13 @@ def render_raw(raw: dict[str, Any]) -> str:
 
 def write_raw(path: Path, raw: dict[str, Any]) -> None:
     """Replace bridge.toml whole, so a crash never leaves half a file."""
+    rendered = render_raw(raw)
+    try:
+        tomllib.loads(rendered)
+    except tomllib.TOMLDecodeError as error:
+        raise ConfigError(f"could not render bridge.toml: {error}") from error
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(render_raw(raw), encoding="utf-8")
+    temporary.write_text(rendered, encoding="utf-8")
     os.replace(temporary, path)
 
 

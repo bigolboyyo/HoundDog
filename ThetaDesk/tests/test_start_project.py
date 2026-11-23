@@ -139,3 +139,76 @@ class StartProjectTests(unittest.TestCase):
             popen.call_args.kwargs["env"]["THETADATA_REST_FALLBACK_ENABLED"],
             "0",
         )
+
+
+class FakeChild:
+    """A child process that either exits when waited for, or keeps running."""
+
+    def __init__(self, exits_on_wait: bool) -> None:
+        self.exits_on_wait = exits_on_wait
+        self.exited = False
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return 0 if self.exited or self.terminated else None
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.exits_on_wait or self.terminated:
+            self.exited = True
+            return 0
+        raise start_project.subprocess.TimeoutExpired("api.py", timeout)
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.terminated = True
+
+
+class StopProcessTests(unittest.TestCase):
+    def test_a_child_that_finishes_within_the_grace_period_is_not_killed(self) -> None:
+        child = FakeChild(exits_on_wait=True)
+
+        start_project._stop_process(child, grace_seconds=60)
+
+        self.assertTrue(child.exited)
+        self.assertFalse(child.terminated)
+
+    def test_a_child_still_running_after_the_grace_period_is_stopped(self) -> None:
+        child = FakeChild(exits_on_wait=False)
+
+        start_project._stop_process(child, grace_seconds=0.01)
+
+        self.assertTrue(child.terminated)
+
+    def test_without_a_grace_period_a_running_child_is_stopped_at_once(self) -> None:
+        child = FakeChild(exits_on_wait=False)
+
+        start_project._stop_process(child)
+
+        self.assertTrue(child.terminated)
+
+    @patch("start_project._stop_process")
+    @patch("start_project.subprocess.Popen")
+    @patch("start_project._ensure_environment")
+    @patch("start_project._is_port_open", return_value=False)
+    def test_ctrl_c_gives_the_api_time_to_finish(
+        self, is_port_open: Mock, ensure_environment: Mock, popen: Mock, stop_process: Mock,
+    ) -> None:
+        api_process = Mock()
+        api_process.wait.side_effect = KeyboardInterrupt
+        popen.return_value = api_process
+
+        result = start_project.main(ask_terminal=False)
+
+        self.assertEqual(result, 130)
+        stop_process.assert_called_once_with(api_process, start_project.API_SHUTDOWN_GRACE_SECONDS)
+
+
+class PythonVersionTests(unittest.TestCase):
+    def test_python_older_than_the_sdk_needs_is_refused(self) -> None:
+        with patch("start_project.platform.python_version_tuple", return_value=("3", "11", "9")):
+            self.assertFalse(start_project._python_version_supported())
+        with patch("start_project.platform.python_version_tuple", return_value=("3", "12", "0")):
+            self.assertTrue(start_project._python_version_supported())
+

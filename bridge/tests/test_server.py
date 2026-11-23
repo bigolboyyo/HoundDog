@@ -1,19 +1,24 @@
+import io
 import json
 import tempfile
 import threading
 import tomllib
 import unittest
-from datetime import date
+from contextlib import redirect_stdout
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import uvicorn
 from fastapi.testclient import TestClient
 
+import bridge
 from config import BridgeConfig, ConfigError, read_raw, render_raw
 from fixtures import bar, bar_coverage, coverage, event, write_lines
 from hounddog_client import HoundDogClient, HoundDogRefused, HoundDogUnavailable, TopicResult
 from server import ServerStop, create_app
+from thetadesk_client import ThetaDeskError
 
 LOCAL = "http://127.0.0.1:8090"
 
@@ -91,6 +96,10 @@ class ServerTests(unittest.TestCase):
             "topics": ["AAPL", "Breaking"], "error": "",
         })
         self.assertEqual(data["display"], {"banner": ""})
+        self.assertEqual(data["watchlist"], [{
+            "symbol": "AAPL", "last_close": 105.0, "price_session": "2026-11-16",
+            "last_check": "2026-11-16T15:00:00+00:00", "news": 1, "quiet": 0, "missing_bars": 0,
+        }])
 
     def test_overview_still_works_while_hounddog_is_down(self):
         self.hounddog.down = True
@@ -100,6 +109,18 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(data["hounddog"]["reachable"])
         self.assertIsNone(data["hounddog"]["topics"])
         self.assertEqual(data["report"]["symbols"][0]["symbol"], "AAPL")
+
+    def test_dashboard_report_matches_cli_json(self):
+        response = self.client().get("/api/overview")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = bridge.main(["report", "--json", "--config", str(self.config)])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(response.json()["report"], json.loads(stdout.getvalue()))
+        [study] = response.json()["report"]["symbols"]
+        self.assertEqual(study["excluded_sessions"][0]["reason"], "missing_previous_bar")
+        self.assertEqual(study["events"][0]["placement"], "before_close")
 
     def test_watching_a_group_creates_one_topic_per_ticker_and_records_the_group(self):
         response = self.watch({
@@ -196,6 +217,60 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(client.get("/app.js").status_code, 200)
         self.assertEqual(client.get("/styles.css").status_code, 200)
 
+    def test_fetch_uses_the_latest_closed_session_and_preserves_retry_after(self):
+        market = Mock()
+        factory = Mock(return_value=market)
+        client = TestClient(create_app(self.config, self.hounddog, thetadesk=factory), base_url=LOCAL)
+        self.assertEqual(client.post("/api/prices/AAPL/fetch", json={}).status_code, 409)
+        factory.assert_not_called()
+        with self.config.open("a", encoding="utf-8") as config:
+            config.write('\n[thetadesk]\nurl = "http://127.0.0.1:8000"\n')
+
+        last = date(2026, 11, 20)
+        first = last - timedelta(days=365)
+        market.fetch_bars.side_effect = [
+            ThetaDeskError("Rate limited.", 429, "12"),
+            {"bars": 1, "added": 1, "covered_through": last.isoformat(), "latest_bar": last.isoformat()},
+            {"bars": 1, "added": 0, "covered_through": last.isoformat(), "latest_bar": last.isoformat()},
+        ]
+        with patch("server.latest_closed_session", return_value=last):
+            refused = client.post("/api/prices/AAPL/fetch", json={}, headers={"Origin": "http://localhost:9000"})
+            unknown = client.post("/api/prices/NVDA/fetch", json={})
+            limited = client.post("/api/prices/aapl/fetch", json={})
+            ready = client.post("/api/prices/AAPL/fetch", json={"refresh": True})
+            updated = client.post("/api/prices/AAPL/fetch", json={"after": "2026-11-18"})
+
+        self.assertEqual((refused.status_code, unknown.status_code, limited.status_code), (403, 404, 429))
+        self.assertEqual(limited.headers["Retry-After"], "12")
+        self.assertEqual(ready.json()["end_date"], last.isoformat())
+        self.assertEqual(ready.json()["added"], 1)
+        self.assertEqual(updated.json()["start_date"], "2026-11-19")
+        self.assertEqual([call.args for call in market.fetch_bars.call_args_list], [
+            ("AAPL", first, last, False), ("AAPL", first, last, True),
+            ("AAPL", date(2026, 11, 19), last, False),
+        ])
+
+    def test_pins_use_the_shared_store_and_open_tickers_outside_the_watchlist(self):
+        with self.config.open("a", encoding="utf-8") as config:
+            config.write('\n[thetadesk]\nurl = "http://127.0.0.1:8000"\n')
+        market = Mock()
+        first, last = date(2026, 11, 13), date(2026, 11, 16)
+        saved = {"symbol": "NVDA", "start_date": first.isoformat(), "end_date": last.isoformat()}
+        market.add_pin.return_value = saved
+        market.pins.return_value = [saved]
+        market.stored_bars.return_value = [{"session_date": last.isoformat(), "close": 51.0}]
+        client = TestClient(create_app(self.config, self.hounddog, thetadesk=lambda _: market), base_url=LOCAL)
+
+        self.assertEqual(client.post("/api/pins", json=saved).status_code, 201)
+        self.assertEqual(client.get("/api/pins").json(), {"pins": [saved]})
+        pin = client.get("/api/tickers/NVDA", params={"start_date": first, "end_date": last}).json()
+
+        market.add_pin.assert_called_once_with("NVDA", first, last)
+        market.stored_bars.assert_called_once_with("NVDA", first, last)
+        self.assertEqual(pin["study"]["symbol"], "NVDA")
+        self.assertEqual(pin["prices"], [{"session": last.isoformat(), "close": 51.0}])
+        self.assertEqual([symbol.symbol for symbol in BridgeConfig.load(self.config).symbols], ["AAPL"])
+
 
 class ConfigWritingTests(unittest.TestCase):
     def test_written_config_reads_back_the_same(self):
@@ -215,6 +290,7 @@ class ConfigWritingTests(unittest.TestCase):
         raw = {
             "inputs": {"hounddog_exports": "../HoundDog/exports"},
             "notes": {"owner": "me", "reviewed": True, "version": 2},
+            "Desk settings": {"notes.label": "research"},
             "symbols": [{"symbol": "AAPL", "topics": ["AAPL"]}],
         }
 

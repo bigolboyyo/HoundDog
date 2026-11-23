@@ -38,10 +38,15 @@ const settingsEmail = document.querySelector("#settings-email");
 const settingsPassword = document.querySelector("#settings-password");
 const settingsSaveButton = document.querySelector("#save-settings");
 const settingsStatus = document.querySelector("#settings-status");
+const clearApiKeyButton = document.querySelector("#clear-api-key");
+const clearCredentialsButton = document.querySelector("#clear-credentials");
+const loadedList = document.querySelector("#loaded-list");
+const emptyLoaded = document.querySelector("#empty-loaded");
 const shutdownButton = document.querySelector("#shutdown-button");
 const stoppedNotice = document.querySelector("#stopped");
 
 const MAX_HISTORY_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const pinnedSummaries = new Map();
 let stockSymbols = null;
@@ -68,84 +73,101 @@ function setMessage(message, isError = false) {
   requestMessage.classList.toggle("error", isError);
 }
 
+// JSON from this server; a failure becomes an Error carrying the server's detail.
+async function requestJson(url, options = {}) {
+  const headers = { Accept: "application/json" };
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  const response = await fetch(url, { cache: "no-store", ...options, headers });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.detail || `Request failed (${response.status}).`);
+  }
+  return result;
+}
+
+// Both ways of showing a ticker (Load history and Loaded tickers) draw into the
+// same result panel; only the most recent one may, so a slow answer cannot
+// replace a newer choice.
+let latestLookup = 0;
+
+function startLookup() {
+  latestLookup += 1;
+  return latestLookup;
+}
+
+function isoDaysBefore(isoDate, days) {
+  return new Date(Date.parse(`${isoDate}T00:00:00Z`) - days * DAY_MS).toISOString().slice(0, 10);
+}
+
+function storedBarsUrl(symbol, startDate, endDate) {
+  const query = `start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+  return `/api/v1/stocks/${encodeURIComponent(symbol)}/bars?${query}`;
+}
+
 function setSettingsStatus(message, isError = false) {
   settingsStatus.textContent = message;
   settingsStatus.classList.toggle("error", isError);
+}
+
+const SAVED_PLACEHOLDER = "Saved. Leave blank to keep it.";
+
+// The server reports what is saved but never the secrets, so the fields start
+// blank and a blank field keeps the saved value.
+function showCredentialStatus(status) {
+  settingsApiKey.value = "";
+  settingsPassword.value = "";
+  settingsEmail.value = status.email || "";
+  settingsApiKey.placeholder = status.api_key_configured ? SAVED_PLACEHOLDER : "Not set";
+  settingsPassword.placeholder = status.credentials_configured ? SAVED_PLACEHOLDER : "Not set";
+  clearApiKeyButton.hidden = !status.api_key_configured;
+  clearCredentialsButton.hidden = !status.credentials_configured;
+}
+
+function describeCredentialStatus(status) {
+  if (status.api_key_configured && status.credentials_configured) return "An API key and account credentials are saved.";
+  if (status.api_key_configured) return "An API key is saved.";
+  if (status.credentials_configured) return "Account credentials are saved.";
+  return "No saved credentials found in the app folder.";
 }
 
 async function openSettings() {
   settingsDialog.showModal();
   settingsSaveButton.disabled = true;
   setSettingsStatus("Loading saved settings…");
-
   try {
-    const response = await fetch("/api/v1/settings/credentials", {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.detail || `Request failed (${response.status}).`);
-    }
-
-    settingsApiKey.value = result.api_key || "";
-    settingsEmail.value = result.email || "";
-    settingsPassword.value = result.password || "";
-    const configured = Boolean(
-      result.api_key || (result.email && result.password),
-    );
-    setSettingsStatus(
-      configured
-        ? "Existing credentials loaded from the app folder."
-        : "No saved credentials found in the app folder.",
-    );
+    const status = await requestJson("/api/v1/settings/credentials");
+    showCredentialStatus(status);
+    setSettingsStatus(describeCredentialStatus(status));
   } catch (error) {
-    setSettingsStatus(
-      error instanceof Error ? error.message : "Could not load settings.",
-      true,
-    );
+    setSettingsStatus(error instanceof Error ? error.message : "Could not load settings.", true);
   } finally {
     settingsSaveButton.disabled = false;
   }
 }
 
-async function saveSettings(event) {
-  event.preventDefault();
+async function changeCredentials(change, doneMessage) {
   settingsSaveButton.disabled = true;
   setSettingsStatus("Saving settings…");
-
   try {
-    const response = await fetch("/api/v1/settings/credentials", {
+    const status = await requestJson("/api/v1/settings/credentials", {
       method: "PUT",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      cache: "no-store",
-      body: JSON.stringify({
-        api_key: settingsApiKey.value,
-        email: settingsEmail.value,
-        password: settingsPassword.value,
-      }),
+      body: JSON.stringify(change),
     });
-    const result = await response.json();
-    if (!response.ok) {
-      throw new Error(result.detail || `Request failed (${response.status}).`);
-    }
-
-    setSettingsStatus(
-      result.api_key_configured || result.credentials_configured
-        ? "Saved locally. The Python SDK will use these next; restart Terminal for REST backup changes."
-        : "Saved. No credentials are configured.",
-    );
+    showCredentialStatus(status);
+    setSettingsStatus(`${doneMessage} ${describeCredentialStatus(status)}`);
   } catch (error) {
-    setSettingsStatus(
-      error instanceof Error ? error.message : "Could not save settings.",
-      true,
-    );
+    setSettingsStatus(error instanceof Error ? error.message : "Could not save settings.", true);
   } finally {
     settingsSaveButton.disabled = false;
   }
+}
+
+function saveSettings(event) {
+  event.preventDefault();
+  return changeCredentials(
+    { api_key: settingsApiKey.value, email: settingsEmail.value, password: settingsPassword.value },
+    "Saved locally. The Python SDK will use these next; restart Terminal for REST backup changes.",
+  );
 }
 
 async function shutDown() {
@@ -353,6 +375,116 @@ function getPinnedMetrics(stats) {
   }));
 }
 
+function pinKey(symbol, startDate, endDate) {
+  return `${symbol}:${startDate}:${endDate}`;
+}
+
+function summarize(symbol, startDate, endDate, rows) {
+  return {
+    key: pinKey(symbol, startDate, endDate),
+    symbol,
+    startDate,
+    endDate,
+    rows: rows.length,
+    points: rows.map(row => ({ timestamp: Date.parse(row.session_date), price: row.close })),
+    metrics: getPinnedMetrics(buildStats(rows)),
+  };
+}
+
+// Pins are saved in ThetaDesk's store and redrawn from stored bars, so showing
+// them never calls ThetaData.
+async function loadPins() {
+  try {
+    const { pins } = await requestJson("/api/v1/pins");
+    const summaries = await Promise.all(pins.map(async (pin) => {
+      const result = await requestJson(storedBarsUrl(pin.symbol, pin.start_date, pin.end_date));
+      return summarize(pin.symbol, pin.start_date, pin.end_date, result.data);
+    }));
+    pinnedSummaries.clear();
+    summaries.forEach((summary) => pinnedSummaries.set(summary.key, summary));
+  } catch (error) {
+    setMessage(`Could not load pinned summaries: ${error.message}`, true);
+  }
+  renderPins();
+  renderSummaryPinButton();
+}
+
+async function unpin(summary) {
+  try {
+    const path = [summary.symbol, summary.startDate, summary.endDate].map(encodeURIComponent).join("/");
+    await requestJson(`/api/v1/pins/${path}`, { method: "DELETE" });
+    pinnedSummaries.delete(summary.key);
+  } catch (error) {
+    setMessage(`Could not unpin ${summary.symbol}: ${error.message}`, true);
+  }
+  renderPins();
+  renderSummaryPinButton();
+}
+
+async function pin(summary) {
+  try {
+    await requestJson("/api/v1/pins", {
+      method: "POST",
+      body: JSON.stringify({ symbol: summary.symbol, start_date: summary.startDate, end_date: summary.endDate }),
+    });
+    pinnedSummaries.set(summary.key, summary);
+  } catch (error) {
+    setMessage(`Could not pin ${summary.symbol}: ${error.message}`, true);
+  }
+  renderPins();
+  renderSummaryPinButton();
+}
+
+async function loadLoadedTickers() {
+  try {
+    const { symbols } = await requestJson("/api/v1/stocks/loaded");
+    renderLoadedTickers(symbols);
+  } catch (error) {
+    setMessage(`Could not list loaded tickers: ${error.message}`, true);
+  }
+}
+
+function renderLoadedTickers(symbols) {
+  emptyLoaded.hidden = symbols.length > 0;
+  loadedList.querySelectorAll(".loaded-ticker").forEach((item) => item.remove());
+  for (const loaded of symbols) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "loaded-ticker";
+    const symbol = document.createElement("span");
+    symbol.className = "loaded-ticker-symbol";
+    symbol.textContent = loaded.symbol;
+    const detail = document.createElement("span");
+    detail.className = "loaded-ticker-detail";
+    detail.textContent = `${loaded.first_session} — ${loaded.last_session} · ${loaded.bars.toLocaleString()} bars`;
+    button.append(symbol, detail);
+    button.setAttribute("aria-label", `Open ${loaded.symbol} from saved data`);
+    button.addEventListener("click", () => openLoaded(loaded));
+    loadedList.append(button);
+  }
+}
+
+// Show a loaded ticker's latest year (or all of it, if less) from stored bars.
+async function openLoaded(loaded) {
+  const last = loaded.last_session;
+  const yearBefore = isoDaysBefore(last, MAX_HISTORY_DAYS);
+  const first = loaded.first_session > yearBefore ? loaded.first_session : yearBefore;
+  symbolInput.value = loaded.symbol;
+  startDateInput.value = first;
+  endDateInput.value = last;
+  setMessage(`Opening ${loaded.symbol} from saved data…`);
+  const lookup = startLookup();
+  try {
+    const result = await requestJson(storedBarsUrl(loaded.symbol, first, last));
+    if (lookup !== latestLookup) return;
+    updateResult(result);
+    setMessage(`Opened ${loaded.symbol} from saved data; ThetaData was not called.`);
+  } catch (error) {
+    if (lookup !== latestLookup) return;
+    setMessage(`Could not open ${loaded.symbol}: ${error.message}`, true);
+  }
+}
+
 function renderPins() {
   const pinnedItems = [...pinnedSummaries.values()];
   emptyPins.hidden = pinnedItems.length > 0;
@@ -375,11 +507,7 @@ function renderPins() {
     removeButton.type = "button";
     removeButton.textContent = "×";
     removeButton.setAttribute("aria-label", `Remove ${pinned.symbol} timeline summary`);
-    removeButton.addEventListener("click", () => {
-      pinnedSummaries.delete(pinned.key);
-      renderPins();
-      renderSummaryPinButton();
-    });
+    removeButton.addEventListener("click", () => unpin(pinned));
     heading.append(symbol, removeButton);
     card.append(heading, context);
     if (pinned.points.length) {
@@ -589,21 +717,10 @@ function renderPriceChart(points, symbol, startDate, endDate) {
 function updateResult(data) {
   const rows = Array.isArray(data.data) ? data.data : [];
   const symbol = data.symbol || symbolInput.value.trim().toUpperCase();
-  const context = `${data.start_date} — ${data.end_date}`;
   const stats = buildStats(rows);
   const points = rows.map(row => ({ timestamp: Date.parse(row.session_date), price: row.close }));
   resultCount.textContent = `${rows.length.toLocaleString()} ${rows.length === 1 ? "row" : "rows"}`;
-  currentSummary = rows.length
-    ? {
-      key: `${symbol}:${context}`,
-      symbol,
-      startDate: data.start_date,
-      endDate: data.end_date,
-      rows: rows.length,
-      points,
-      metrics: getPinnedMetrics(stats),
-    }
-    : null;
+  currentSummary = rows.length ? summarize(symbol, data.start_date, data.end_date, rows) : null;
   renderSummaryPinButton();
   renderPriceChart(points, symbol, data.start_date, data.end_date);
   renderTable(rows);
@@ -638,6 +755,7 @@ form.addEventListener("submit", async (event) => {
   submitButton.disabled = true;
   submitButton.querySelector("span").textContent = "Loading…";
   setMessage(`Looking up ${symbol}…`);
+  const lookup = startLookup();
   try {
     const response = await fetch(
       `/api/v1/stocks/${encodeURIComponent(symbol)}/bars/fetch`,
@@ -659,9 +777,12 @@ form.addEventListener("submit", async (event) => {
           : detail,
       );
     }
-    updateResult(result);
     refreshBarsInput.checked = false;
+    loadLoadedTickers();
+    if (lookup !== latestLookup) return;
+    updateResult(result);
   } catch (error) {
+    if (lookup !== latestLookup) return;
     resultCount.textContent = "Lookup failed";
     setMessage(error instanceof Error ? error.message : "The lookup failed.", true);
   } finally {
@@ -670,21 +791,23 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-pinSummaryButton.addEventListener("click", () => {
+pinSummaryButton.addEventListener("click", async () => {
   if (!currentSummary || !currentSummary.points.length) {
     return;
   }
-  if (pinnedSummaries.has(currentSummary.key)) {
-    pinnedSummaries.delete(currentSummary.key);
-  } else {
-    pinnedSummaries.set(currentSummary.key, currentSummary);
-  }
-  renderPins();
-  renderSummaryPinButton();
+  const summary = currentSummary;
+  pinSummaryButton.disabled = true;
+  await (pinnedSummaries.has(summary.key) ? unpin(summary) : pin(summary));
+  pinSummaryButton.disabled = false;
 });
 
-clearPinsButton.addEventListener("click", () => {
-  pinnedSummaries.clear();
+clearPinsButton.addEventListener("click", async () => {
+  try {
+    await requestJson("/api/v1/pins", { method: "DELETE" });
+    pinnedSummaries.clear();
+  } catch (error) {
+    setMessage(`Could not clear pinned summaries: ${error.message}`, true);
+  }
   renderPins();
   renderSummaryPinButton();
 });
@@ -693,6 +816,8 @@ openSettingsButton.addEventListener("click", openSettings);
 shutdownButton.addEventListener("click", shutDown);
 closeSettingsButton.addEventListener("click", () => settingsDialog.close());
 settingsForm.addEventListener("submit", saveSettings);
+clearApiKeyButton.addEventListener("click", () => changeCredentials({ clear_api_key: true }, "Removed the API key."));
+clearCredentialsButton.addEventListener("click", () => changeCredentials({ clear_credentials: true }, "Removed the account."));
 settingsDialog.addEventListener("click", (event) => {
   if (event.target === settingsDialog) {
     settingsDialog.close();
@@ -724,3 +849,5 @@ symbolInput.addEventListener("input", () => {
 });
 
 setDefaultDates();
+loadPins();
+loadLoadedTickers();

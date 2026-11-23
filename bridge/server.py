@@ -15,6 +15,7 @@ import threading
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +28,16 @@ from pydantic import BaseModel, Field
 
 from config import DEFAULT_CONFIG, BridgeConfig, ConfigError, add_watched, normalize_symbol
 from hounddog_client import HoundDogClient, HoundDogRefused, HoundDogUnavailable
+from market_calendar import NyseCalendar
 from overview import Overview, plain
+from thetadesk_client import ThetaDeskClient, ThetaDeskError
 
 DEFAULT_PORT = 8090
 LOCAL_HOSTS = ["127.0.0.1", "localhost"]
 STATIC = Path(__file__).resolve().with_name("static")
 MAX_KEYWORDS = 20
 MAX_NAME_LENGTH = 80
+PRICE_HISTORY_DAYS = 365
 
 
 class TickerRequest(BaseModel):
@@ -44,6 +48,17 @@ class TickerRequest(BaseModel):
 class WatchRequest(BaseModel):
     tickers: list[TickerRequest] = Field(min_length=1, max_length=50)
     group: str | None = None
+
+
+class PriceFetchRequest(BaseModel):
+    refresh: bool = False
+    after: date | None = None
+
+
+class PinRequest(BaseModel):
+    symbol: str
+    start_date: date
+    end_date: date
 
 
 @dataclass(frozen=True)
@@ -96,10 +111,37 @@ def clean_keywords(keywords: list[str]) -> list[str]:
     return cleaned
 
 
+def require_symbol(value: str) -> str:
+    try:
+        return normalize_symbol(value)
+    except ConfigError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+def validate_date_range(first: date, last: date) -> None:
+    if first > last:
+        raise HTTPException(status_code=422, detail="Start date must be on or before end date.")
+
+
+def latest_closed_session() -> date:
+    return NyseCalendar().latest_closed_session(datetime.now(timezone.utc))
+
+
+def price_range() -> tuple[date, date]:
+    last = latest_closed_session()
+    return last - timedelta(days=PRICE_HISTORY_DAYS), last
+
+
+def upstream_error(error: ThetaDeskError) -> HTTPException:
+    headers = {"Retry-After": error.retry_after} if error.retry_after else None
+    return HTTPException(status_code=error.status, detail=str(error), headers=headers)
+
+
 def create_app(
     config_path: Path = DEFAULT_CONFIG,
     hounddog: Callable[[str], HoundDogClient] = HoundDogClient,
     server_stop: ServerStop | None = None,
+    thetadesk: Callable[[str], ThetaDeskClient] = ThetaDeskClient,
 ) -> FastAPI:
     stop = server_stop if server_stop is not None else ServerStop()
     app = FastAPI(title="theta_hound bridge")
@@ -120,13 +162,22 @@ def create_app(
         except (HoundDogUnavailable, HoundDogRefused) as error:
             return {"reachable": False, "topics": None, "error": str(error)}
 
+    def market_client(config: BridgeConfig) -> ThetaDeskClient:
+        if not config.thetadesk_url:
+            raise HTTPException(status_code=409, detail="ThetaDesk actions are off for this Bridge configuration.")
+        return thetadesk(config.thetadesk_url)
+
     @app.get("/api/overview")
     def overview() -> dict[str, Any]:
         config = load_config()
         data = Overview(config)
+        report = data.report()
+        first, last = price_range()
         return plain({
             "status": data.status(),
-            "report": data.report(),
+            "report": report,
+            "watchlist": data.watchlist(report, first, last),
+            "thetadesk": {"enabled": bool(config.thetadesk_url), "latest_session": last},
             "hounddog": {"url": config.hounddog_url, "enabled": bool(config.hounddog_url), **live_hounddog(config)},
             "config": {"path": config_path, "symbols": config.symbols, "groups": config.groups},
             "display": {"banner": config.banner},
@@ -174,6 +225,56 @@ def create_app(
         except (ConfigError, OSError) as error:
             raise HTTPException(status_code=500, detail=f"Could not update bridge.toml: {error}") from error
         return plain({"results": results, "config": {"symbols": config.symbols, "groups": config.groups}})
+
+    @app.post("/api/prices/{symbol}/fetch")
+    def fetch_prices(symbol: str, body: PriceFetchRequest, request: Request) -> dict[str, Any]:
+        refuse_cross_origin(request)
+        symbol = require_symbol(symbol)
+        config = load_config()
+        client = market_client(config)
+        if not any(entry.symbol == symbol for entry in config.symbols):
+            raise HTTPException(status_code=404, detail="Add this ticker to the Bridge watchlist first.")
+        first, last = price_range()
+        if body.after is not None:
+            if body.after >= last:
+                raise HTTPException(status_code=422, detail="The latest NYSE close is already in the requested history.")
+            first = max(first, body.after + timedelta(days=1))
+        try:
+            result = client.fetch_bars(symbol, first, last, body.refresh)
+        except ThetaDeskError as error:
+            raise upstream_error(error) from error
+        return plain({"symbol": symbol, "start_date": first, "end_date": last, **result})
+
+    @app.get("/api/pins")
+    def pins() -> dict[str, Any]:
+        try:
+            return {"pins": market_client(load_config()).pins()}
+        except ThetaDeskError as error:
+            raise upstream_error(error) from error
+
+    @app.post("/api/pins", status_code=201)
+    def pin(body: PinRequest, request: Request) -> dict[str, Any]:
+        refuse_cross_origin(request)
+        symbol = require_symbol(body.symbol)
+        validate_date_range(body.start_date, body.end_date)
+        try:
+            return market_client(load_config()).add_pin(symbol, body.start_date, body.end_date)
+        except ThetaDeskError as error:
+            raise upstream_error(error) from error
+
+    @app.get("/api/tickers/{symbol}")
+    def ticker(symbol: str, start_date: date, end_date: date) -> dict[str, Any]:
+        symbol = require_symbol(symbol)
+        validate_date_range(start_date, end_date)
+        config = load_config()
+        try:
+            rows = market_client(config).stored_bars(symbol, start_date, end_date)
+        except ThetaDeskError as error:
+            raise upstream_error(error) from error
+        return {
+            "study": plain(Overview(config).ticker(symbol)),
+            "prices": [{"session": row["session_date"], "close": row["close"]} for row in rows],
+        }
 
     @app.post("/api/shutdown", status_code=202)
     def shutdown(request: Request) -> dict[str, bool]:

@@ -30,8 +30,8 @@ instructions; this file is a quick architecture and maintenance map.
 - `kongtext/kongtext.ttf`: local font used by the NES theme; NES.css itself is
   loaded from a pinned CDN release.
 - `INTEGRATION.md`: the event export's record formats (`hounddog.coverage/1`,
-  `hounddog.event/1`, `hounddog.revision/1`) and the plan for joining them with
-  a separate ThetaData (market data) app in a bridge program. The formats are a
+  `hounddog.event/1`, `hounddog.revision/1`) and how Bridge joins them with
+  ThetaDesk's market data. The formats are a
   contract other programs read: read it before changing what History stores,
   how timestamps are recorded, or any exported field.
 - `tests/dashboard.test.js`: Node built-in tests for dashboard rendering and
@@ -75,10 +75,15 @@ instructions; this file is a quick architecture and maintenance map.
   both report the same items as new. The CLI and the background job are
   separate processes and share the saved-check SQLite transaction. It rechecks
   pending matches under the write lock to avoid duplicate detections.
-- `POST /api/shutdown` (the dashboard's Shut down button) ends `serve_forever`.
-  `DashboardServer.daemon_threads = False`, so `server_close` joins request
-  threads: a check or config write in progress finishes before the process
-  exits, on Ctrl+C too. The background job is a separate process and keeps running.
+- `POST /api/shutdown` (the toolbar's Shut down tool) ends `serve_forever`.
+  `main` then calls `DashboardServer.wait_for_requests()`, on Ctrl+C too, so a
+  check or config write in progress finishes before the process exits. A
+  request counts from `parse_request` (headers read) until
+  `handle_one_request` returns. Idle connections, which browsers open
+  speculatively, are not counted; their daemon threads end with the process.
+  `DashboardHandler.timeout` (15 seconds per socket read or write) ends a
+  request whose client stops sending, so it cannot hold up a shutdown.
+  The background job is a separate process and keeps running.
 - The background job: `TaskScheduler` (in `scheduled_task.py`) builds the task
   XML (`task_xml`: TimeTrigger repetition with no Duration, so indefinite;
   `IgnoreNew` so runs never overlap; allowed on battery; `StartWhenAvailable`)
@@ -115,8 +120,8 @@ instructions; this file is a quick architecture and maintenance map.
   had an ETag or Last-Modified (`feed_validators`), or null before one.
 - Fetch errors go through `watcher.error_text`, not `clean_text`: error strings
   are not HTML, and `URLError`'s `<urlopen error ...>` would be stripped as a tag.
-- `--dry-run` and the dashboard's Preview only action must not change the seen
-  database.
+- `--dry-run` and the dashboard's Preview only action must preserve History
+  and saved feed validators. They can write check logs and feed backoff.
 - The database migration in `watcher.ensure_seen_schema` adds metadata columns
   while preserving existing seen rows. Steps that rewrite stored data are
   versioned with `PRAGMA user_version` (`SEEN_SCHEMA_VERSION`) and run once;
@@ -194,9 +199,11 @@ instructions; this file is a quick architecture and maintenance map.
   fetch time and the tester reports the oldest one in use.
 - Feeds and topics are edited by position (`/api/feeds/<n>`, `/api/topics/<n>`),
   and positions shift when another tab or a hand edit changes the list. Every
-  `PUT` and `DELETE` must send `expected` (the entry as the client last saw it;
-  compared by `ConfigList.identity`: name and URL for feeds, name for topics),
-  and the server answers 409 if that position now holds something else. The
+  `PUT` and `DELETE` must send `expected` (the entry as the client last saw it),
+  compared on every editable field by `ConfigList.fields`: name, URL and
+  interval for feeds; name, keywords and excludes for topics. The server
+  answers 409 if that position now holds something else, including the same
+  entry changed by another tab, so a stale tab cannot overwrite it. The
   dashboard keeps the original entry being edited (`editingFeed`,
   `editingTopic`, the tester's name-keyed `<select>`), looks up its current
   position before saving, and reloads the list on a 409. Never store a bare

@@ -30,6 +30,8 @@ from market_calendar import NyseCalendar
 DAILY = "1d"
 SMALL_SAMPLE = 10
 NEWS, QUIET, UNWATCHED = "news", "quiet", "unwatched"
+MISSING_BAR, MISSING_PREVIOUS_BAR = "missing_bar", "missing_previous_bar"
+INVALID_PREVIOUS_CLOSE, OUTSIDE_COVERAGE = "invalid_previous_close", "outside_coverage"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,19 @@ class SessionPoint:
 
 
 @dataclass(frozen=True)
+class ClosingPrice:
+    session: date
+    close: float
+
+
+@dataclass(frozen=True)
+class ExcludedSession:
+    session: date
+    close: float | None
+    reason: str
+
+
+@dataclass(frozen=True)
 class PlacedEvent:
     """An article, the topic it matched first, and the session it belongs to."""
 
@@ -66,6 +81,18 @@ class PlacedEvent:
     detected_at: datetime
     session: date
     has_move: bool
+    placement: str
+    exclusion: str | None
+
+
+@dataclass(frozen=True)
+class ExcludedEvent:
+    event_id: str
+    topic: str
+    title: str
+    link: str
+    detected_at: datetime
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -86,6 +113,10 @@ class SymbolStudy:
     events: tuple[PlacedEvent, ...]
     sessions: tuple[SessionPoint, ...]
     notes: tuple[str, ...]
+    excluded_sessions: tuple[ExcludedSession, ...]
+    excluded_events: tuple[ExcludedEvent, ...]
+    verdict: str
+    prices: tuple[ClosingPrice, ...]
 
 
 @dataclass(frozen=True)
@@ -111,6 +142,21 @@ def small_sample_note(news_sessions: int) -> list[str]:
     return []
 
 
+def move_verdict(news: GroupStats, quiet: GroupStats) -> str:
+    if news.mean_abs_change is None or quiet.mean_abs_change is None:
+        return "Need both news and quiet sessions to compare moves."
+    news_move = f"{news.mean_abs_change:.2%}"
+    quiet_move = f"{quiet.mean_abs_change:.2%}"
+    if news_move == quiet_move:
+        comparison = "Average moves were equal at the displayed precision."
+    else:
+        direction = "larger" if news.mean_abs_change > quiet.mean_abs_change else "smaller"
+        comparison = f"Average moves were {direction} on news days."
+    if min(news.sessions, quiet.sessions) < SMALL_SAMPLE:
+        return f"Small sample. {comparison}"
+    return comparison
+
+
 class DailyStudy:
     def __init__(
         self,
@@ -121,7 +167,7 @@ class DailyStudy:
         coverage: tuple[BarCoverage, ...],
     ) -> None:
         self._calendar = calendar
-        self._events = events
+        self._events = sorted(events, key=lambda event: event.detected_at)
         self._checks = sorted((check for check in checks if check.read_any_feed), key=lambda c: c.started_at)
         self._bars = bars
         self._coverage = coverage
@@ -129,8 +175,20 @@ class DailyStudy:
     def run(self, symbol: StudySymbol) -> SymbolStudy:
         bars = {bar.session_date: bar for bar in self._bars if bar.symbol == symbol.symbol and bar.interval == DAILY}
         scheduled = self._scheduled_sessions(symbol.symbol)
-        moved = [day for day in scheduled if self._has_move(day, bars)]
-        events = self._placed_events(symbol, set(moved))
+        moved: dict[date, Bar] = {}
+        excluded: dict[date, ExcludedSession] = {}
+        for day in scheduled:
+            bar = bars.get(day)
+            previous = bars.get(self._calendar.previous_trading_day(day))
+            if bar is None:
+                excluded[day] = ExcludedSession(day, None, MISSING_BAR)
+            elif previous is None:
+                excluded[day] = ExcludedSession(day, bar.close, MISSING_PREVIOUS_BAR)
+            elif not previous.close > 0:
+                excluded[day] = ExcludedSession(day, bar.close, INVALID_PREVIOUS_CLOSE)
+            else:
+                moved[day] = previous
+        events, excluded_events = self._place_events(symbol, moved, excluded)
         news_days = {event.session for event in events}
         watching = self._check_times(symbol.topics)
         median_volume = median(bars[day].volume for day in moved) if moved else 0
@@ -138,24 +196,29 @@ class DailyStudy:
             SessionPoint(
                 session=day,
                 close=bars[day].close,
-                change=bars[day].close / bars[self._calendar.previous_trading_day(day)].close - 1,
+                change=bars[day].close / previous.close - 1,
                 volume_ratio=bars[day].volume / median_volume if median_volume else None,
                 kind=NEWS if day in news_days else QUIET if self._watched(day, watching) else UNWATCHED,
             )
-            for day in moved
+            for day, previous in moved.items()
         )
-        news = [point for point in points if point.kind == NEWS]
-        notes = self._notes(symbol, bars, scheduled, events) + small_sample_note(len(news))
+        news = group_stats([point for point in points if point.kind == NEWS])
+        quiet = group_stats([point for point in points if point.kind == QUIET])
+        notes = self._notes(symbol, bars, scheduled, events) + small_sample_note(news.sessions)
         return SymbolStudy(
             symbol=symbol.symbol,
             topics=symbol.topics,
-            news=group_stats(news),
-            quiet=group_stats([point for point in points if point.kind == QUIET]),
+            news=news,
+            quiet=quiet,
             unwatched_sessions=sum(1 for point in points if point.kind == UNWATCHED),
-            missing_bars=tuple(day for day in scheduled if day not in bars),
+            missing_bars=tuple(day for day, entry in excluded.items() if entry.reason == MISSING_BAR),
             events=tuple(events),
             sessions=points,
             notes=tuple(notes),
+            excluded_sessions=tuple(excluded.values()),
+            excluded_events=tuple(excluded_events),
+            verdict=move_verdict(news, quiet),
+            prices=tuple(ClosingPrice(day, bar.close) for day, bar in sorted(bars.items())),
         )
 
     @staticmethod
@@ -184,30 +247,42 @@ class DailyStudy:
                 days.update(self._calendar.trading_days(covered.start_date, covered.end_date))
         return sorted(days)
 
-    def _has_move(self, day: date, bars: dict[date, Bar]) -> bool:
-        previous = bars.get(self._calendar.previous_trading_day(day))
-        return day in bars and previous is not None and previous.close > 0
-
-    def _placed_events(self, symbol: StudySymbol, moved: set[date]) -> list[PlacedEvent]:
-        """Each article once, at its earliest detection for any of the symbol's
-        topics; dropped if that first detection was backfill."""
-        first: dict[str, tuple[NewsEvent, str, bool]] = {}
-        for event in self._events:
-            for match in event.topics:
-                if match.name not in symbol.topics:
-                    continue
-                known = first.get(event.event_id)
-                if known is None or event.detected_at < known[0].detected_at:
-                    first[event.event_id] = (event, match.name, match.backfill)
+    def _place_events(
+        self, symbol: StudySymbol, moved: dict[date, Bar], excluded: dict[date, ExcludedSession],
+    ) -> tuple[list[PlacedEvent], list[ExcludedEvent]]:
+        """Place the earliest match per article and record why later matches are excluded."""
         placed = []
-        for event, topic, backfill in sorted(first.values(), key=lambda entry: entry[0].detected_at):
-            if backfill:
+        excluded_events = []
+        seen: set[str] = set()
+        for event in self._events:
+            match = next((match for match in event.topics if match.name in symbol.topics), None)
+            if match is None:
+                continue
+            repeated = event.event_id in seen
+            seen.add(event.event_id)
+            if repeated or match.backfill:
+                excluded_events.append(ExcludedEvent(
+                    event.event_id, match.name, event.title, event.link, event.detected_at,
+                    "repeat_detection" if repeated else "backfill",
+                ))
                 continue
             session = self._calendar.session_for(event.detected_at).day
+            detected_day = event.detected_at.astimezone(self._calendar.zone).date()
+            if session == detected_day:
+                placement = "before_close"
+            elif self._calendar.is_trading_day(detected_day):
+                placement = "at_or_after_close"
+            else:
+                placement = "market_closed"
+            has_move = session in moved
+            exclusion = None
+            if not has_move:
+                exclusion = excluded[session].reason if session in excluded else OUTSIDE_COVERAGE
             placed.append(PlacedEvent(
-                event.event_id, topic, event.title, event.link, event.detected_at, session, session in moved,
+                event.event_id, match.name, event.title, event.link, event.detected_at,
+                session, has_move, placement, exclusion,
             ))
-        return placed
+        return placed, excluded_events
 
     def _check_times(self, topics: tuple[str, ...]) -> list[datetime]:
         """Start times, in order, of the checks that read a feed and listed one of

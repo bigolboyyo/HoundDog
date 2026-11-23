@@ -49,6 +49,7 @@ class DailyStudyTests(unittest.TestCase):
         self.assertAlmostEqual(study.quiet.mean_abs_change, 0.0)
         self.assertAlmostEqual(study.news.mean_volume_ratio, 2.5, msg="(3000 + 2000) / 2 over a median of 1000")
         self.assertEqual(study.unwatched_sessions, 0)
+        self.assertEqual(study.verdict, "Small sample. Average moves were larger on news days.")
 
     def test_sessions_hounddog_did_not_watch_are_not_quiet(self):
         records = [coverage(1, "2026-11-16 15:00", ["AAPL"]), event(1, "2026-11-16 15:00", "https://x/mon", ["AAPL"])]
@@ -81,6 +82,9 @@ class DailyStudyTests(unittest.TestCase):
         study = self.run_study(records)
 
         self.assertEqual([(placed.event_id, placed.session) for placed in study.events], [("tue", TUE)])
+        self.assertEqual([(entry.event_id, entry.reason) for entry in study.excluded_events], [
+            ("old", "backfill"), ("old", "repeat_detection"), ("tue", "repeat_detection"),
+        ])
 
     def test_weekend_news_belongs_to_monday(self):
         records = [coverage(1, "2026-11-14 15:00", ["AAPL"]), event(1, "2026-11-14 15:00", "https://x/sat", ["AAPL"])]
@@ -88,6 +92,8 @@ class DailyStudyTests(unittest.TestCase):
         study = self.run_study(records)
 
         self.assertEqual(study.events[0].session, MON)
+        self.assertEqual(study.events[0].placement, "market_closed")
+        self.assertIsNone(study.events[0].exclusion)
         self.assertEqual(study.news.sessions, 1)
 
     def test_news_without_a_stored_move_is_reported_as_pending(self):
@@ -96,6 +102,8 @@ class DailyStudyTests(unittest.TestCase):
         study = self.run_study(records)
 
         self.assertEqual(study.events[0].session, date(2026, 11, 23))
+        self.assertEqual(study.events[0].placement, "at_or_after_close")
+        self.assertEqual(study.events[0].exclusion, "outside_coverage")
         self.assertFalse(study.events[0].has_move)
         self.assertTrue(any("without a stored move" in note for note in study.notes))
 
@@ -103,10 +111,22 @@ class DailyStudyTests(unittest.TestCase):
         write_lines(self.folder / "theta-bars-2026-11-22.jsonl",
                     [bar("AAPL", day, 100.0) for day in (PREVIOUS_FRI, MON, WED, THU, FRI)])
 
-        study = self.run_study(self.hourly_checks())
+        study = self.run_study(self.hourly_checks() + [
+            event(2, "2026-11-17 15:00", "https://x/tue", ["AAPL"]),
+            event(3, "2026-11-18 15:00", "https://x/wed", ["AAPL"]),
+        ])
 
         self.assertEqual(study.missing_bars, (TUE,))
         self.assertEqual(study.quiet.sessions, 3, "Tuesday and Wednesday have no move")
+        self.assertEqual([(entry.session, entry.close, entry.reason) for entry in study.excluded_sessions], [
+            (PREVIOUS_FRI, 100.0, "missing_previous_bar"),
+            (TUE, None, "missing_bar"),
+            (WED, 100.0, "missing_previous_bar"),
+        ])
+        self.assertEqual([(entry.placement, entry.exclusion) for entry in study.events], [
+            ("before_close", "missing_bar"), ("before_close", "missing_previous_bar"),
+        ])
+        self.assertEqual(study.news.sessions, 0)
 
     def test_a_check_at_the_close_belongs_to_that_session(self):
         # 21:00 UTC is 16:00 ET in November: Monday's close.

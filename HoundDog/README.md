@@ -196,9 +196,9 @@ The optional dashboard is a dependency-free local web application.
 Double-click `HoundDog.exe` to start the server and open the dashboard. It
 uses the `watch.toml`, `watcher.db`, and exports beside the executable.
 Keep `watch.toml` with the executable if you move it. To stop the dashboard,
-click **Shut down** at the top of the page or press Ctrl+C in its console;
-either way a check in progress finishes first. The background job is separate
-and keeps running.
+open **Shut down** in the left toolbar and confirm, or press Ctrl+C in its
+console. A running feed check can finish before the dashboard exits. The
+background job is separate and keeps running.
 
 Run `.\build_exe.ps1` from this folder to build or update the executable.
 The packaging dependencies live in `.venv-build`. A rebuild replaces the
@@ -289,6 +289,10 @@ stored in `watcher.db`. Use a custom port if needed:
 python watcher_server.py --port 8081
 ```
 
+In background checking mode, reload the dashboard to see matches saved by the
+scheduled process. An open dashboard does not refresh its Inbox automatically
+after that process saves a check.
+
 NES.css is loaded from its pinned 2.3.0 CDN release. The NES theme is offered
 only when the stylesheet loads successfully; if it is unavailable, the option
 stays hidden and any saved NES selection falls back to Pico. Its rules,
@@ -303,7 +307,39 @@ python watcher.py --config C:\path\watch.toml --db C:\path\watcher.db
 
 When a feed cannot be fetched or parsed, the watcher prints a warning naming
 that source and continues with the remaining feeds. It exits with status `1`
-only if every source fails during a one-shot run.
+when every attempted source fails during a one-shot run. Configuration and
+unexpected scheduled-run failures have separate exit codes.
+
+## Dashboard HTTP API
+
+The default base URL is `http://127.0.0.1:8080`. These are local dashboard
+endpoints. The server checks Host and Origin, requires JSON for POST and PUT,
+and reports JSON errors with an `error` field.
+
+| Method and path | Behavior |
+| --- | --- |
+| `GET /api/dashboard` | Settings, feeds, topics, and the full History, including read and starred state. |
+| `POST /api/check` | Check the configured feeds. Pass `dry_run: true` for a preview. Both modes log the check, but only a saved check adds History and event exports. |
+| `POST /api/topic-test` | Test `keywords` and optional `exclude` against the `latest` or `history` corpus. For `latest`, `refresh: true` fetches fresh items for the tester. |
+| `GET /api/health`, `GET /api/activity` | Feed health and the most recent logged checks. |
+| `POST /api/feeds`, `POST /api/topics` | Append a feed or a topic. Duplicate topic names return HTTP 409. |
+| `PUT` or `DELETE /api/feeds/{position}` or `/api/topics/{position}` | Edit or remove a zero-based entry. Send `expected`: the entry as you last read it from `/api/dashboard`. If any editable field differs now (another tab saved first, or the list shifted), the change is refused with HTTP 409. |
+| `PUT /api/settings`, `PUT /api/items/state` | Update watcher settings, or set read or starred flags for the supplied article `links`. |
+| `GET /api/export?format=json`, `GET /api/export?format=csv` | Download a dashboard backup or a History CSV. The JSON Lines integration export is a separate file stream. |
+| `POST /api/import`, `DELETE /api/seen` | Import a JSON backup or clear History. Clearing History leaves the integration exports in place. |
+| `GET`, `PUT`, or `DELETE /api/schedule` | Read, install or update, or remove the Windows scheduled task. |
+| `POST /api/schedule/run`, `DELETE /api/schedule/log` | Start the installed task or clear its error log. |
+| `POST /api/shutdown` | Accept a dashboard server shutdown request. Send an empty JSON object. |
+
+### Backup and restore limits
+
+Every backup HoundDog exports can be imported again. Both sides share one size
+limit, 1 GiB: export refuses a larger backup and says to shorten History
+retention, and import accepts anything up to that size, with no limit per row
+or per field. If you select both configuration
+and History, the History merge commits before the configuration file is
+replaced. If the file write fails, retrying the backup does not duplicate
+History rows.
 
 ## Troubleshooting
 
@@ -338,8 +374,8 @@ not touch them. Previews and dry runs add nothing. If a file cannot be written
 `watcher.db` and a later check writes them. Turn the export off with
 `event_export = false` or in Settings > Data.
 
-`INTEGRATION.md` describes the record formats and the plan for combining them
-with market data.
+[The integration contract](INTEGRATION.md) describes the record formats and
+how Bridge uses them.
 
 ## Tests
 

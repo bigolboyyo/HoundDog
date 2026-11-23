@@ -34,9 +34,10 @@ CONFIG_PATH = ROOT / "watch.toml"
 DB_PATH = ROOT / "watcher.db"
 
 MAX_BODY_BYTES = 64 * 1024
-MAX_IMPORT_BYTES = 25 * 1024 * 1024
-MAX_IMPORT_HISTORY_ROWS = 100_000
-MAX_IMPORT_FIELD_LENGTH = 20_000
+# One limit for both directions: export refuses a backup import could not
+# accept, so every backup it produces restores. Fields and rows have no limit
+# of their own, like the History they come from.
+MAX_IMPORT_BYTES = 1024 * 1024 * 1024
 EXPORT_FORMAT = "hounddog-export"
 EXPORT_VERSION = 1
 HISTORY_FIELDS = (
@@ -240,8 +241,6 @@ def parse_history_row(row: object, number: int) -> tuple[str | None, ...]:
             continue
         if not isinstance(value, str) or (field in REQUIRED_HISTORY_FIELDS and not value.strip()):
             raise ValueError(f"History item {number} needs text for '{field}'")
-        if len(value) > MAX_IMPORT_FIELD_LENGTH:
-            raise ValueError(f"History item {number}: '{field}' is too long")
         if field == "first_seen":
             # Same format the watcher writes, so retention comparisons stay valid.
             value = parse_timestamp(value, f"History item {number}: 'first_seen'")
@@ -285,8 +284,6 @@ def import_document(document: object, replace_config: bool, merge_history: bool)
         history = document.get("history")
         if not isinstance(history, list):
             raise ValueError("The export has no history")
-        if len(history) > MAX_IMPORT_HISTORY_ROWS:
-            raise ValueError(f"History is limited to {MAX_IMPORT_HISTORY_ROWS:,} items")
         for number, entry in enumerate(history, start=1):
             row = parse_history_row(entry, number)
             rows.append(row)
@@ -546,26 +543,33 @@ def parse_topic(body: dict) -> dict:
 class ConfigList:
     """A [[sources]] or [[topics]] array that the dashboard edits by position.
 
-    Positions shift when another tab, or a hand edit of watch.toml, adds or
-    removes an entry. So every edit or delete names the entry it expects at that
-    position (by the identity fields), and a mismatch is refused rather than
-    changing a different entry.
+    Every edit or delete sends the entry as the tab last saw it ('expected'),
+    and it is refused unless every editable field still matches. That catches a
+    list shifted by another tab or a hand edit of watch.toml, and a save from a
+    tab that has not seen another tab's change to the same entry. Fields the
+    page adds for display are ignored.
     """
 
     key: str
     label: str
-    identity: tuple[str, ...]
+    # Each editable field with the value an entry has when the field is absent.
+    fields: tuple[tuple[str, object], ...]
     parse: Callable[[dict], dict]
+
+    def snapshot(self, entry: dict) -> tuple[object, ...]:
+        return tuple(entry.get(field, default) for field, default in self.fields)
 
     def matches(self, expected: object, entry: dict) -> bool:
         if not isinstance(expected, dict):
             raise ValueError(f"Say which {self.label.lower()} to change ('expected')")
-        return all(expected.get(field) == entry.get(field) for field in self.identity)
+        return self.snapshot(expected) == self.snapshot(entry)
 
 
 CONFIG_LISTS = {
-    "/api/feeds/": ConfigList("sources", "Feed", ("name", "url"), parse_feed),
-    "/api/topics/": ConfigList("topics", "Topic", ("name",), parse_topic),
+    "/api/feeds/": ConfigList(
+        "sources", "Feed", (("name", None), ("url", None), ("check_every_minutes", None)), parse_feed,
+    ),
+    "/api/topics/": ConfigList("topics", "Topic", (("name", None), ("keywords", []), ("exclude", [])), parse_topic),
 }
 
 
@@ -596,14 +600,32 @@ class DashboardServer(ThreadingHTTPServer):
     # in use, so a forgotten old server keeps answering requests. Bind
     # exclusively there so a second server fails with "address in use" instead.
     allow_reuse_address = os.name != "nt"
-    # Request threads are joined by server_close, so stopping the server (from the
-    # dashboard or with Ctrl+C) lets a running check or config write finish.
-    daemon_threads = False
 
     def __init__(self, address: tuple[str, int]) -> None:
         super().__init__(address, DashboardHandler)
         self.allowed_hosts = allowed_hosts(address[0], self.server_address[1])
         self.allowed_origins = frozenset(f"http://{host}" for host in self.allowed_hosts)
+        # Requests read and not yet answered. Stopping waits for these, so a check
+        # or config write in progress finishes; idle connections (a browser opens
+        # spare ones) are not counted, and their daemon threads end with the process.
+        self._working = 0
+        self._work_done = threading.Condition()
+
+    def request_started(self) -> None:
+        with self._work_done:
+            self._working += 1
+
+    def request_finished(self) -> None:
+        with self._work_done:
+            self._working -= 1
+            self._work_done.notify_all()
+
+    def wait_for_requests(self) -> None:
+        """Block until no request is being handled. Waits in short steps so Ctrl+C
+        can still interrupt it on Windows."""
+        with self._work_done:
+            while not self._work_done.wait_for(lambda: self._working == 0, timeout=0.5):
+                pass
 
     def server_bind(self) -> None:
         if os.name == "nt":
@@ -614,6 +636,27 @@ class DashboardServer(ThreadingHTTPServer):
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "HoundDog/0.1"
     server: DashboardServer
+    # Seconds one socket read or write may wait. A client that stops sending in
+    # the middle of a request then times out instead of holding up a shutdown.
+    # Work between reads, such as a feed check, is not limited by it.
+    timeout = 15
+
+    def handle_one_request(self) -> None:
+        self.counted = False
+        try:
+            super().handle_one_request()
+        finally:
+            if self.counted:
+                self.server.request_finished()
+
+    def parse_request(self) -> bool:
+        # Called once the request line and headers have arrived: the wait for a
+        # request on an idle connection is over and the work begins.
+        if not super().parse_request():
+            return False
+        self.server.request_started()
+        self.counted = True
+        return True
 
     def end_headers(self) -> None:
         for name, value in SECURITY_HEADERS.items():
@@ -723,6 +766,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 if export_format == "json":
                     body = json.dumps(export_document(), ensure_ascii=False, indent=2).encode("utf-8")
+                    if len(body) > MAX_IMPORT_BYTES:
+                        self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": (
+                            f"This backup would be {len(body) / 1024**2:,.0f} MB, more than the "
+                            f"{MAX_IMPORT_BYTES / 1024**2:,.0f} MB import can restore. Shorten "
+                            "History retention in Settings, then export again."
+                        )})
+                        return
                     self.send_download(body, "application/json; charset=utf-8", f"hounddog-export-{stamp}.json")
                 elif export_format == "csv":
                     # BOM so Excel opens the UTF-8 file with the right encoding.
@@ -842,8 +892,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             if path == "/api/shutdown":
                 self.send_json(HTTPStatus.ACCEPTED, {"stopping": True})
-                # Ends serve_forever; main then waits for other requests in
-                # progress before exiting. The background job is unaffected.
+                # Ends serve_forever; main then waits for requests in progress
+                # before exiting. The background job is unaffected.
                 self.server.shutdown()
                 return
 
@@ -979,7 +1029,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if not config_list.matches(body.get("expected"), entries[position]):
                     self.send_json(
                         HTTPStatus.CONFLICT,
-                        {"error": f"That {config_list.label.lower()} was changed elsewhere; check the list and try again."},
+                        {"error": (
+                            f"That {config_list.label.lower()} was changed elsewhere, in another tab or in "
+                            "watch.toml. The list has been reloaded; make your change again."
+                        )},
                     )
                     return
                 if replacement is None:
@@ -1036,6 +1089,7 @@ def main(argv: Sequence[str] | None = None, *, open_browser: bool = False) -> in
         print()
     finally:
         print("Stopping: waiting for requests in progress...")
+        server.wait_for_requests()
         server.server_close()
     print("Server stopped.")
     return 0

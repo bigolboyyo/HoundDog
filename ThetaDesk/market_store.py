@@ -19,6 +19,15 @@ from theta_data import (
 
 EASTERN = ZoneInfo("America/New_York")
 ONE_DAY = timedelta(days=1)
+# A bar for today is stored only from this time (Eastern), once ThetaData's
+# end-of-day report should be final; an earlier one may be provisional, and a
+# stored bar is never replaced. Assumption: the report is published at about
+# 17:15 ET, so this leaves a margin.
+DAILY_BAR_FINAL_AT = time(18, 0)
+
+
+def _now() -> datetime:
+    return datetime.now(EASTERN)
 INTERVAL = "1d"
 BAR_SCHEMA = "theta.bar/1"
 COVERAGE_SCHEMA = "theta.coverage/1"
@@ -46,6 +55,14 @@ CREATE TABLE IF NOT EXISTS fetched_ranges (
     end_date TEXT NOT NULL,
     PRIMARY KEY (symbol, interval, start_date, end_date)
 );
+CREATE TABLE IF NOT EXISTS pins (
+    symbol TEXT NOT NULL,
+    interval TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    pinned_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, interval, start_date, end_date)
+);
 CREATE TABLE IF NOT EXISTS export_outbox (
     id INTEGER PRIMARY KEY,
     utc_day TEXT NOT NULL,
@@ -67,6 +84,26 @@ class BarFetchResult:
     covered_through: date | None
     added: int
     data: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class LoadedSymbol:
+    """A ticker with daily bars in the store, and the sessions they span."""
+
+    symbol: str
+    interval: str
+    bars: int
+    first_session: date
+    last_session: date
+
+
+@dataclass(frozen=True)
+class Pin:
+    """A pinned summary: a ticker over fixed dates, redrawn from stored bars."""
+
+    symbol: str
+    start_date: date
+    end_date: date
 
 
 def _session_date(row: dict[str, Any]) -> date:
@@ -117,6 +154,12 @@ def normalize_daily_bars(
             prices = {field: float(row[field]) for field in ("open", "high", "low", "close")}
             if not all(isfinite(price) for price in prices.values()):
                 raise ValueError("nonfinite price")
+            if not all(price > 0 for price in prices.values()):
+                raise ValueError("prices must be positive")
+            if not prices["low"] <= min(prices["open"], prices["close"]) <= max(
+                prices["open"], prices["close"]
+            ) <= prices["high"]:
+                raise ValueError("open and close must lie between low and high")
             raw_volume = row["volume"]
             volume = int(raw_volume)
             if isinstance(raw_volume, str):
@@ -284,6 +327,97 @@ def default_data_directory() -> Path:
     return Path(local_app_data) / "ThetaDesk" if local_app_data else Path.home() / ".thetadesk"
 
 
+def _open_store(directory: Path) -> sqlite3.Connection:
+    directory.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(directory / "market.db", timeout=30)
+    connection.row_factory = sqlite3.Row
+    connection.executescript(_DATABASE_SCHEMA)
+    return connection
+
+
+def _stored_rows(connection: sqlite3.Connection, symbol: str, start_date: date, end_date: date) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """
+        SELECT symbol, interval, session_date, start_at, open, high, low, close, volume, provider
+        FROM bars WHERE symbol = ? AND interval = ? AND session_date BETWEEN ? AND ?
+        ORDER BY session_date
+        """,
+        (symbol, INTERVAL, start_date.isoformat(), end_date.isoformat()),
+    )
+    return [{"schema": BAR_SCHEMA, **dict(row)} for row in rows]
+
+
+def _normalize_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper()
+    if not symbol:
+        raise ValueError("symbol must not be empty")
+    return symbol
+
+
+def stored_daily_bars(
+    symbol: str, start_date: date, end_date: date, *, data_dir: Path | None = None
+) -> list[dict[str, Any]]:
+    """Daily bars already in the store; never calls ThetaData."""
+    if start_date > end_date:
+        raise ValueError("start_date must be on or before end_date")
+    with closing(_open_store(data_dir if data_dir is not None else default_data_directory())) as connection:
+        return _stored_rows(connection, _normalize_symbol(symbol), start_date, end_date)
+
+
+def loaded_symbols(*, data_dir: Path | None = None) -> list[LoadedSymbol]:
+    with closing(_open_store(data_dir if data_dir is not None else default_data_directory())) as connection:
+        rows = connection.execute(
+            """
+            SELECT symbol, COUNT(*), MIN(session_date), MAX(session_date)
+            FROM bars WHERE interval = ? GROUP BY symbol ORDER BY symbol
+            """,
+            (INTERVAL,),
+        ).fetchall()
+    return [
+        LoadedSymbol(symbol, INTERVAL, count, date.fromisoformat(first), date.fromisoformat(last))
+        for symbol, count, first, last in rows
+    ]
+
+
+def list_pins(*, data_dir: Path | None = None) -> list[Pin]:
+    """Pins in the order they were made."""
+    with closing(_open_store(data_dir if data_dir is not None else default_data_directory())) as connection:
+        rows = connection.execute(
+            "SELECT symbol, start_date, end_date FROM pins WHERE interval = ? ORDER BY pinned_at, rowid",
+            (INTERVAL,),
+        ).fetchall()
+    return [Pin(symbol, date.fromisoformat(start), date.fromisoformat(end)) for symbol, start, end in rows]
+
+
+def add_pin(symbol: str, start_date: date, end_date: date, *, data_dir: Path | None = None) -> Pin:
+    """Pin a ticker over fixed dates; pinning the same dates again changes nothing."""
+    if start_date > end_date:
+        raise ValueError("start_date must be on or before end_date")
+    pin = Pin(_normalize_symbol(symbol), start_date, end_date)
+    with closing(_open_store(data_dir if data_dir is not None else default_data_directory())) as connection:
+        with connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO pins (symbol, interval, start_date, end_date, pinned_at) VALUES (?, ?, ?, ?, ?)",
+                (pin.symbol, INTERVAL, start_date.isoformat(), end_date.isoformat(),
+                 datetime.now(timezone.utc).isoformat()),
+            )
+    return pin
+
+
+def remove_pins(pin: Pin | None = None, *, data_dir: Path | None = None) -> int:
+    """Remove one pin, or every pin when pin is None; return how many were removed."""
+    with closing(_open_store(data_dir if data_dir is not None else default_data_directory())) as connection:
+        with connection:
+            if pin is None:
+                cursor = connection.execute("DELETE FROM pins WHERE interval = ?", (INTERVAL,))
+            else:
+                cursor = connection.execute(
+                    "DELETE FROM pins WHERE symbol = ? AND interval = ? AND start_date = ? AND end_date = ?",
+                    (_normalize_symbol(pin.symbol), INTERVAL, pin.start_date.isoformat(), pin.end_date.isoformat()),
+                )
+            return cursor.rowcount
+
+
 def fetch_daily_bars(
     symbol: str,
     start_date: date,
@@ -292,20 +426,17 @@ def fetch_daily_bars(
     data_dir: Path | None = None,
     refresh: bool = False,
 ) -> BarFetchResult:
-    symbol = symbol.strip().upper()
-    if not symbol:
-        raise ValueError("symbol must not be empty")
+    symbol = _normalize_symbol(symbol)
     validate_history_range(start_date, end_date)
-    today = datetime.now(EASTERN).date()
+    now = _now()
+    today = now.date()
+    final_today = now.time() >= DAILY_BAR_FINAL_AT
     if end_date > today:
         raise ValueError("end_date must not be in the future (America/New_York)")
 
     directory = data_dir if data_dir is not None else default_data_directory()
-    directory.mkdir(parents=True, exist_ok=True)
     covered_through = min(end_date, today - ONE_DAY)
-    with closing(sqlite3.connect(directory / "market.db", timeout=30)) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.executescript(_DATABASE_SCHEMA)
+    with closing(_open_store(directory)) as connection:
         _queue_existing_coverage(connection)
         _flush_exports(connection, directory / "exports")
         added = 0
@@ -313,6 +444,9 @@ def fetch_daily_bars(
         for first, last in ranges:
             history = fetch_stock_history(symbol, first, last)
             bars = normalize_daily_bars(symbol, history, first, last)
+            if not final_today:
+                # Possibly provisional; a later fetch stores the final bar.
+                bars = [bar for bar in bars if bar["session_date"] != today.isoformat()]
             # An empty response for today might arrive before the EOD report.
             # Cache coverage for past sessions and for today once its bar exists.
             completed = min(last, covered_through)
@@ -320,15 +454,7 @@ def fetch_daily_bars(
                 completed = last
             added += _save_fetch(connection, symbol, first, completed, bars)
             _flush_exports(connection, directory / "exports")
-        rows = connection.execute(
-            """
-            SELECT symbol, interval, session_date, start_at, open, high, low, close, volume, provider
-            FROM bars WHERE symbol = ? AND interval = ? AND session_date BETWEEN ? AND ?
-            ORDER BY session_date
-            """,
-            (symbol, INTERVAL, start_date.isoformat(), end_date.isoformat()),
-        )
-        data = [{"schema": BAR_SCHEMA, **dict(row)} for row in rows]
+        data = _stored_rows(connection, symbol, start_date, end_date)
     if data and data[-1]["session_date"] == end_date.isoformat():
         covered_through = end_date
     return BarFetchResult(

@@ -43,6 +43,15 @@ class NyseCalendarTests(unittest.TestCase):
         self.assertEqual(self.calendar.session(date(2026, 7, 1)).open_at.astimezone(UTC).hour, 13)
         self.assertEqual(self.calendar.session(date(2026, 1, 2)).open_at.astimezone(UTC).hour, 14)
 
+    def test_latest_completed_session_respects_early_close(self):
+        for moment, day in (
+            ("2026-11-27T17:59:00+00:00", date(2026, 11, 25)),
+            ("2026-11-27T18:00:00+00:00", date(2026, 11, 27)),
+            ("2026-11-28T21:00:00+00:00", date(2026, 11, 27)),
+        ):
+            with self.subTest(moment=moment):
+                self.assertEqual(self.calendar.latest_closed_session(datetime.fromisoformat(moment)), day)
+
     def test_news_belongs_to_the_session_whose_close_follows_it(self):
         cases = {
             "2026-11-16T14:00:00+00:00": date(2026, 11, 16),  # Monday 09:00 ET, pre-market

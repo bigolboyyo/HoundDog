@@ -10,7 +10,7 @@ from typing import Any
 from config import BridgeConfig
 from exports import MarketData, NewsData, ReadReport, read_market, read_news
 from market_calendar import NyseCalendar
-from study import DailyStudy, GroupStudy, SymbolStudy
+from study import DAILY, DailyStudy, GroupStudy, StudySymbol, SymbolStudy
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,17 @@ class Report:
     groups: tuple[GroupStudy, ...]
 
 
+@dataclass(frozen=True)
+class WatchlistEntry:
+    symbol: str
+    last_close: float | None
+    price_session: date | None
+    last_check: datetime | None
+    news: int
+    quiet: int
+    missing_bars: int
+
+
 class Overview:
     """Both exports, read once."""
 
@@ -92,10 +103,40 @@ class Overview:
         )
 
     def report(self) -> Report:
-        study = DailyStudy(NyseCalendar(), self.news.events, self.news.checks, self.market.bars, self.market.coverage)
+        study = self.daily_study()
         symbols = {symbol.symbol: study.run(symbol) for symbol in self.config.symbols}
         groups = tuple(DailyStudy.run_group(group, symbols) for group in self.config.groups)
         return Report(tuple(symbols.values()), groups)
+
+    def daily_study(self) -> DailyStudy:
+        return DailyStudy(NyseCalendar(), self.news.events, self.news.checks, self.market.bars, self.market.coverage)
+
+    def ticker(self, symbol: str) -> SymbolStudy:
+        configured = next((entry for entry in self.config.symbols if entry.symbol == symbol), None)
+        return self.daily_study().run(configured or StudySymbol(symbol, (symbol,)))
+
+    def watchlist(self, report: Report, first: date, last: date) -> tuple[WatchlistEntry, ...]:
+        latest = {}
+        for bar in self.market.bars:
+            current = latest.get(bar.symbol)
+            if bar.interval == DAILY and (current is None or bar.session_date > current.session_date):
+                latest[bar.symbol] = bar
+        last_checks = {}
+        for check in self.news.checks:
+            if check.read_any_feed:
+                for topic in check.topics or ():
+                    if topic not in last_checks or check.started_at > last_checks[topic]:
+                        last_checks[topic] = check.started_at
+        return tuple(
+            WatchlistEntry(
+                study.symbol, latest[study.symbol].close if study.symbol in latest else None,
+                latest[study.symbol].session_date if study.symbol in latest else None,
+                max((last_checks[topic] for topic in study.topics if topic in last_checks), default=None),
+                study.news.sessions, study.quiet.sessions,
+                sum(first <= day <= last for day in study.missing_bars),
+            )
+            for study in report.symbols
+        )
 
 
 def plain(value: Any) -> Any:

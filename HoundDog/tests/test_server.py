@@ -2,10 +2,12 @@ import http.client
 import io
 import json
 import os
+import socket
 import sqlite3
 from contextlib import closing, redirect_stderr, redirect_stdout
 import tempfile
 import threading
+import time
 import unittest
 from http import HTTPStatus
 from pathlib import Path
@@ -169,7 +171,7 @@ class ShutdownTests(ServerTestCase):
         response, _ = self.request("GET", "/api/dashboard")
         self.assertEqual(response.status, 200)
 
-    def test_closing_waits_for_requests_in_progress(self):
+    def test_stopping_waits_for_requests_in_progress(self):
         started, release = threading.Event(), threading.Event()
 
         def slow_get(handler):
@@ -184,17 +186,50 @@ class ShutdownTests(ServerTestCase):
             self.assertTrue(started.wait(5))
             self.shutdown()
             self.serve_thread.join(timeout=5)
-            closer = threading.Thread(target=self.server.server_close)
-            closer.start()
-            closer.join(timeout=0.3)
-            self.assertTrue(closer.is_alive(), "server_close returned while a request was still running")
+            waiter = threading.Thread(target=self.server.wait_for_requests)
+            waiter.start()
+            waiter.join(timeout=0.3)
+            self.assertTrue(waiter.is_alive(), "stopped waiting while a request was still running")
             release.set()
-            closer.join(timeout=5)
+            waiter.join(timeout=5)
             client.join(timeout=5)
 
-        self.assertFalse(closer.is_alive())
+        self.assertFalse(waiter.is_alive())
         self.assertEqual(slow["response"].status, 200)
         self.assertEqual(json.loads(slow["body"]), {"finished": True})
+
+    def test_a_client_that_stops_sending_its_body_does_not_hold_up_stopping(self):
+        # The real limit must be finite; the test shortens it to stay fast.
+        self.assertIsNotNone(watcher_server.DashboardHandler.timeout)
+        self.assertLessEqual(watcher_server.DashboardHandler.timeout, 30)
+        stalled = socket.create_connection(("127.0.0.1", self.port))
+        self.addCleanup(stalled.close)
+        with patch.object(watcher_server.DashboardHandler, "timeout", 0.5):
+            stalled.sendall(
+                f"POST /api/topics HTTP/1.1\r\nHost: 127.0.0.1:{self.port}\r\n"
+                "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{".encode()
+            )
+            time.sleep(0.2)
+            self.shutdown()
+            self.serve_thread.join(timeout=5)
+            waiter = threading.Thread(target=self.server.wait_for_requests)
+            waiter.start()
+            waiter.join(timeout=5)
+
+        self.assertFalse(waiter.is_alive(), "stopping waited for a request body that never arrived")
+
+    def test_an_idle_connection_does_not_hold_up_stopping(self):
+        # Browsers open spare connections and may send nothing on them.
+        idle = socket.create_connection(("127.0.0.1", self.port))
+        self.addCleanup(idle.close)
+
+        self.shutdown()
+        self.serve_thread.join(timeout=5)
+        waiter = threading.Thread(target=self.server.wait_for_requests)
+        waiter.start()
+        waiter.join(timeout=2)
+
+        self.assertFalse(waiter.is_alive(), "stopping waited for a connection that never sent a request")
 
 
 class ConfigSafetyTests(ServerTestCase):
@@ -363,6 +398,30 @@ class SettingsExportImportTests(ServerTestCase):
         history = {item["link"]: item for item in watcher_server.seen_items()}
         self.assertEqual(history["https://example.com/b"]["first_seen"], "2026-02-01T10:00:00+00:00")
 
+    def test_every_export_restores_including_long_text(self):
+        long_summary = "word " * 4_202 + "ab"  # 21,012 characters, longer than the old field limit
+        self.seed_history([("T", "https://example.com/long", "2026-01-01T00:00:00+00:00", "Long story")])
+        with closing(sqlite3.connect(watcher_server.DB_PATH)) as db, db:
+            db.execute("UPDATE seen SET summary = ? WHERE link = ?", (long_summary, "https://example.com/long"))
+        _, body = self.request("GET", "/api/export?format=json")
+        with closing(sqlite3.connect(watcher_server.DB_PATH)) as db, db:
+            db.execute("DELETE FROM seen")
+
+        response, body = self.json_request("POST", "/api/import", {"data": json.loads(body), "merge_history": True})
+
+        self.assertEqual(response.status, 200, body)
+        self.assertEqual(json.loads(body)["history_added"], 1)
+        [restored] = [item for item in watcher_server.seen_items() if item["link"] == "https://example.com/long"]
+        self.assertEqual(restored["summary"], long_summary.strip())
+
+    def test_export_refuses_a_backup_too_large_to_restore(self):
+        self.seed_history([("T", "https://example.com/a", "2026-01-01T00:00:00+00:00", "Story A")])
+        with patch.object(watcher_server, "MAX_IMPORT_BYTES", 100):
+            response, body = self.request("GET", "/api/export?format=json")
+
+        self.assertEqual(response.status, 413)
+        self.assertIn("History retention", json.loads(body)["error"])
+
     def test_csv_export_neutralizes_spreadsheet_formulas(self):
         self.seed_history([("T", "https://example.com/a", "2026-01-01T00:00:00+00:00", '=HYPERLINK("http://evil")')])
         response, body = self.request("GET", "/api/export?format=csv")
@@ -405,37 +464,68 @@ class ConfigEntryEditTests(ServerTestCase):
     def names(self, key):
         return [entry["name"] for entry in watcher_server.read_raw_config()[key]]
 
+    def entry(self, key, position):
+        """The entry as a tab sees it in the dashboard, to send as 'expected'."""
+        return self.dashboard()[key][position]
+
+    def dashboard(self):
+        _, body = self.request("GET", "/api/dashboard")
+        return json.loads(body)
+
     def test_edit_and_delete_apply_when_the_expected_entry_is_there(self):
         response, body = self.json_request("PUT", "/api/topics/1", {
-            "name": "Privacy", "keywords": ["privacy", "GDPR"], "expected": {"name": "Policy"},
+            "name": "Privacy", "keywords": ["privacy", "GDPR"], "expected": self.entry("topics", 1),
         })
         self.assertEqual(response.status, 200, body)
-        response, body = self.json_request("DELETE", "/api/feeds/0", {
-            "expected": {"name": "Example", "url": "https://example.com/feed.xml"},
-        })
+        response, body = self.json_request("DELETE", "/api/feeds/0", {"expected": self.entry("sources", 0)})
         self.assertEqual(response.status, 200, body)
         self.assertEqual(json.loads(body)["deleted"]["name"], "Example")
         self.assertEqual((self.names("topics"), self.names("sources")), (["AI tooling", "Privacy"], ["Second"]))
 
     def test_a_shifted_list_is_refused_instead_of_changing_another_entry(self):
         # Another tab deleted topic 0, so "Policy" moved to position 0.
-        self.json_request("DELETE", "/api/topics/0", {"expected": {"name": "AI tooling"}})
-        response, _ = self.json_request("DELETE", "/api/topics/0", {"expected": {"name": "AI tooling"}})
+        ai_tooling, example = self.entry("topics", 0), self.entry("sources", 0)
+        self.json_request("DELETE", "/api/topics/0", {"expected": ai_tooling})
+        response, _ = self.json_request("DELETE", "/api/topics/0", {"expected": ai_tooling})
         self.assertEqual(response.status, 409)
         response, _ = self.json_request("PUT", "/api/feeds/0", {
             "name": "Renamed", "url": "https://example.com/feed.xml",
-            "expected": {"name": "Example", "url": "https://example.com/other.xml"},
+            "expected": {**example, "url": "https://example.com/other.xml"},
         })
         self.assertEqual(response.status, 409)
         self.assertEqual((self.names("topics"), self.names("sources")), (["Policy"], ["Example", "Second"]))
 
+    def test_a_save_from_a_stale_tab_is_refused_instead_of_overwriting(self):
+        # Two tabs open the same topic and feed; the first saves, then the second.
+        topic, feed = self.entry("topics", 1), self.entry("sources", 1)
+        first, _ = self.json_request("PUT", "/api/topics/1", {**topic, "keywords": ["privacy", "GDPR"], "expected": topic})
+        stale, body = self.json_request("PUT", "/api/topics/1", {**topic, "exclude": ["ads"], "expected": topic})
+        self.json_request("PUT", "/api/feeds/1", {**feed, "check_every_minutes": 30, "expected": feed})
+        stale_feed, _ = self.json_request("PUT", "/api/feeds/1", {**feed, "check_every_minutes": 90, "expected": feed})
+        stale_delete, _ = self.json_request("DELETE", "/api/topics/1", {"expected": topic})
+
+        self.assertEqual(first.status, 200)
+        self.assertEqual((stale.status, stale_feed.status, stale_delete.status), (409, 409, 409))
+        self.assertIn("changed elsewhere", json.loads(body)["error"])
+        saved = watcher_server.read_raw_config()
+        self.assertEqual((saved["topics"][1]["keywords"], saved["topics"][1].get("exclude", [])), (["privacy", "GDPR"], []))
+        self.assertEqual(saved["sources"][1]["check_every_minutes"], 30)
+
+    def test_extra_fields_the_page_adds_do_not_count_as_a_change(self):
+        topic = {**self.entry("topics", 1), "matches_today": 3}
+
+        response, body = self.json_request("PUT", "/api/topics/1", {**topic, "keywords": ["GDPR"], "expected": topic})
+
+        self.assertEqual(response.status, 200, body)
+
     def test_expected_is_required_and_positions_are_validated(self):
+        ai_tooling, policy = self.entry("topics", 0), self.entry("topics", 1)
         cases = [
             ("DELETE", "/api/topics/0", {}, 400),
             ("PUT", "/api/feeds/0", {"name": "X", "url": "https://example.com/x"}, 400),
-            ("DELETE", "/api/topics/-1", {"expected": {"name": "AI tooling"}}, 400),
-            ("DELETE", "/api/topics/9", {"expected": {"name": "AI tooling"}}, 404),
-            ("PUT", "/api/topics/1", {"name": "AI tooling", "keywords": ["x"], "expected": {"name": "Policy"}}, 409),
+            ("DELETE", "/api/topics/-1", {"expected": ai_tooling}, 400),
+            ("DELETE", "/api/topics/9", {"expected": ai_tooling}, 404),
+            ("PUT", "/api/topics/1", {"name": "AI tooling", "keywords": ["x"], "expected": policy}, 409),
             ("DELETE", "/api/widgets/0", {}, 404),
         ]
         for method, path, payload, status in cases:
@@ -548,7 +638,7 @@ class InboxAndFetchStateTests(ServerTestCase):
 
         response, body = self.json_request("PUT", "/api/feeds/1", {
             "name": "Daily", "url": "https://example.org/daily",
-            "expected": {"name": "Daily", "url": "https://example.org/daily"},
+            "expected": {"name": "Daily", "url": "https://example.org/daily", "check_every_minutes": 1440},
         })
         self.assertEqual(response.status, 200, body)
         self.assertIsNone(watcher.Config.load(self.config_path).sources[-1].check_every_minutes, "cleared by omitting it")

@@ -826,6 +826,65 @@ h1 {
   color: var(--danger);
 }
 
+.loaded-heading {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid #29342c;
+}
+
+.loaded-heading h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 580;
+  letter-spacing: -0.04em;
+}
+
+.loaded-list {
+  display: grid;
+  gap: 6px;
+}
+
+.empty-loaded {
+  margin: 0;
+  color: #76847a;
+  font-size: 10px;
+}
+
+.loaded-ticker {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid #344137;
+  border-radius: 9px;
+  background: #141b16;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease;
+}
+
+.loaded-ticker:hover,
+.loaded-ticker:focus-visible {
+  border-color: #708455;
+  outline: none;
+}
+
+.loaded-ticker-symbol {
+  color: #dfe8dd;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+}
+
+.loaded-ticker-detail {
+  color: #86948a;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
 .pin-panel-footer {
   display: flex;
   align-items: center;
@@ -882,6 +941,11 @@ h1 {
 }
 
 .settings-description,
+.settings-clear {
+  align-self: flex-start;
+  margin-top: -4px;
+}
+
 .settings-hint {
   margin: 0;
   color: #89978d;

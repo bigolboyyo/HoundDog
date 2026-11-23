@@ -1,10 +1,7 @@
-# HoundDog and ThetaData: integration plan
+# HoundDog and ThetaDesk integration
 
-Status: HoundDog's side is built (2026-11-22). The bridge and the ThetaData
-app's output are next, once that app joins this workspace.
-
-Goal: find correlations between the news HoundDog collects and market data
-from a separate ThetaData app, while each program keeps working on its own.
+HoundDog exports news and check coverage. ThetaDesk exports daily bars and
+the dates it looked up. Bridge reads both exports for the daily study.
 
 ## Decisions
 
@@ -12,8 +9,8 @@ Made on 2026-11-22:
 
 1. **The bridge contains it all.** A third program reads each app's output and
    does the joining, the topic-to-symbol mapping, time zone conversion, the
-   analysis, and the combined dashboard. HoundDog and the ThetaData app only
-   produce their own output; neither reads or writes the other's files.
+   analysis, and the combined dashboard. HoundDog and ThetaDesk each own
+   their output and keep working independently.
 2. **One output per app, with shared conventions** (below), so the bridge reads
    both the same way.
 3. **First seen is fixed.** An article keeps the headline and date it had when
@@ -23,8 +20,6 @@ Made on 2026-11-22:
    retention never touches it.
 
 ## Shared output conventions
-
-What each app's output should follow, so the bridge treats them alike:
 
 - JSON Lines (one JSON object per line), UTF-8, LF line endings.
 - Append-only files, one per UTC day, in a folder owned by that app.
@@ -37,17 +32,15 @@ What each app's output should follow, so the bridge treats them alike:
 - Records can repeat (delivery is at least once); each schema names the fields
   that identify a record.
 
-ThetaData's v2 API gives times as `ms_of_day` (milliseconds since midnight,
-US Eastern) plus a `date`
-([ThetaData HTTP docs](https://http-docs.thetadata.us/operations/get-v2-snapshot-stock-ohlc.html)).
-Whether the ThetaData app converts them to UTC in its own output, or the bridge
-does, is still open; converting in the app keeps the bridge to joining only.
+ThetaDesk converts the regular session open to UTC before export and retains
+the New York session date. Its market and coverage records are specified in
+the [ThetaDesk guide](../ThetaDesk/README.md#store-and-export-daily-bars).
 
 ## HoundDog's output
 
 Every saved check (command line, background job, or dashboard) appends records
 to `exports/hounddog-YYYY-MM-DD.jsonl` beside `watcher.db`. The day is the UTC
-day the check started. Previews and dry runs write nothing.
+day the check started. Previews and dry runs do not write to this export.
 
 - On by default; `event_export = false` in `[settings]` (or Settings > Data in
   the dashboard) turns it off.
@@ -80,9 +73,10 @@ stopped, a failed check). "No events" is only meaningful inside coverage.
   "trigger": "scheduled",
   "started_at": "2026-11-22T15:33:00+00:00",
   "finished_at": "2026-11-22T15:33:02+00:00",
+  "topics": [{"name": "Breaking", "fingerprint": "d0244e1330b0823c"}],
   "feeds": [
     {"name": "BBC News", "url": "https://feeds.bbci.co.uk/news/rss.xml",
-     "status": "ok", "items": 33, "new_matches": 1, "detail": ""}
+     "status": "ok", "items": 33, "new_matches": 1, "detail": "", "backfill": false}
   ]
 }
 ```
@@ -115,7 +109,10 @@ stopped, a failed check). "No events" is only meaningful inside coverage.
   "title": "Headline as first seen",
   "summary": "Summary as first seen",
   "author": "",
-  "topics": [{"name": "Breaking", "keywords": ["outage"]}],
+  "topics": [
+    {"name": "Breaking", "keywords": ["outage"],
+     "feed_url": "https://feeds.bbci.co.uk/news/rss.xml", "backfill": false}
+  ],
   "backfill": false
 }
 ```
@@ -184,50 +181,24 @@ For "when did HoundDog first know about this article", use its earliest
 - **Symbols.** Topics are mapped to tickers in the bridge.
 - **Market time.** HoundDog stays UTC-only and dependency-free.
 
-## The bridge (next)
+## How Bridge reads these records
 
-- Reads both apps' output folders. It can keep its own index of what it has
-  read, or simply reread the daily files.
-- Deduplicates records by the fields each schema names.
-- Holds the topic-to-symbol mapping, for example `Breaking → AMZN`.
-- Converts to market time with daylight saving time. On Windows, Python's
-  `zoneinfo` needs the `tzdata` package for that; that is fine in the bridge.
-- Maps news outside regular trading hours to the next session's open, keeping
-  the original time too.
-- First study (event study): for each event and symbol, the return (and, with
-  options data, implied volatility and volume) over fixed windows after the
-  event, such as 5 and 30 minutes and 1 day. Compare against the same windows
-  at random covered times, or at the same time of day on days without events.
-- Pitfalls to plan for:
-  - look-ahead (use `detected_at` for anything tradeable);
-  - many keyword and symbol pairs tested at once (expect false positives;
-    hold data out);
-  - overlapping events;
-  - backfill events;
-  - small samples. With three feeds and two topics, History held 35 articles
-    after about a day, so per-keyword samples will take weeks.
+Bridge rereads the export folders and deduplicates records by schema key. It
+keeps its topic-to-ticker mappings in `bridge.toml`. When a user adds a ticker
+from the Bridge dashboard, Bridge asks HoundDog's local API to create the topic.
+HoundDog still owns the resulting configuration.
 
-## Combined dashboard (eventually)
+The study assigns each article by its first matching detection in New York
+time. If that first detection was backfill, the article is excluded for that
+ticker. On a trading day, detections before the scheduled close go to that
+session. Detections at or after the close, or on a closed day, go to the next
+trading session. The analysis uses close-to-close returns and compares news
+sessions with sessions that have a return and a qualifying HoundDog check
+without an eligible article. Revision records are counted in export status.
+Article placement uses the detection event.
 
-Part of the bridge, never part of HoundDog's dashboard:
-
-- a price (or implied volatility) chart per symbol with news events as markers;
-- an event-study table per topic and keyword (average move after events against
-  baseline, with counts);
-- a coverage strip showing when HoundDog was and was not watching;
-- filters by topic, source, and released or detected time.
-
-## Open questions about the ThetaData app
-
-- Language and stack, and where it keeps its data (files, a database, or live
-  terminal requests only).
-- ThetaData API version (v2 or v3), and which instruments: stocks, options,
-  indices.
-- Which measures to correlate (price returns, volume, implied volatility), and
-  at what resolution (ticks, minute bars, daily).
-- Research on past data, live monitoring, or both.
-- Its output: what it writes today, and what it should write under the shared
-  conventions above.
+The CLI and dashboard use the same report. Rules and examples are in the
+[Bridge guide](../bridge/README.md#what-the-report-means).
 
 ## Review notes (2026-11-22)
 
@@ -241,11 +212,11 @@ Fixed in the review before this work:
 - Importing a backup let the backup's read state override an article that was
   unread here. Local state now wins for articles already in History.
 
-Known, not changed:
+Known limits:
 
 - An open dashboard tab does not reload while the background job saves new
   matches, so its Inbox goes stale until the page refreshes.
 - The check log behind Health and Log keeps 1,000 checks; coverage in the
   export is the complete record.
-- None of the current feeds supports conditional requests, so each check
-  downloads them in full; gzip and per-feed intervals still help.
+- Conditional requests depend on each feed. The Health view reports whether
+  the last saved download supplied a usable validator.

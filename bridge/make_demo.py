@@ -167,6 +167,7 @@ def demo_config(symbols: Sequence[str], thetadesk_exports: str) -> dict[str, Any
     return {
         "inputs": {"hounddog_exports": "exports", "thetadesk_exports": thetadesk_exports},
         "hounddog": {"url": ""},
+        "thetadesk": {"url": ""},
         "display": {"banner": "DEMO DATA: real ThetaDesk prices with made-up news. The demo news is planted "
                               "on big-move days, so these results show the dashboard, not the market."},
         "symbols": [{"symbol": symbol, "topics": [symbol]} for symbol in symbols],
