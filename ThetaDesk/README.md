@@ -107,6 +107,11 @@ read one place. Use `--data-dir PATH` to select another folder for both the
 database and its exports. When `LOCALAPPDATA` is absent, the default
 store is `~/.thetadesk`.
 
+For a Windows reset or a move, copy the market store folder to another
+drive. `market.db` holds bars and pins. The `exports` folder holds the
+research archive that Bridge reads, and credentials live beside the active
+app. See the [handoff data locations](../PLAN.md#before-resetting-or-moving-windows).
+
 Repeat requests fetch only gaps in previously covered ranges. SQLite tracks
 successful empty ranges as well, such as weekends. For the current New York
 date, an empty response stays eligible for a later fetch while the EOD report
@@ -120,6 +125,11 @@ UTC date it was stored. These UTF-8 records use `theta.bar/1` and contain the
 symbol, interval (`1d`), New York session date, regular session open in UTC
 (`start_at`), OHLCV, and provider (`sdk` or `rest`). The prices and volume
 come from the provider's EOD report. [ThetaData EOD report documentation](https://http-docs.thetadata.us/operations/get-v2-hist-stock-eod.html)
+
+New exports also include `recorded_at`, the actual UTC time assigned when
+ThetaDesk saves the bar. The session's open can be days or months earlier
+when loading history. The queued export keeps its original timestamp if
+delivery is retried. Older exports without this field have unknown save times.
 
 The bar key is `(symbol, interval, start_at)`. The store keeps the first
 successfully recorded bar for each key, so two rules keep bad values out:
@@ -140,10 +150,12 @@ delivery.
 Completed fetch ranges are exported to
 `exports/theta-coverage-YYYY-MM-DD.jsonl` as `theta.coverage/1`. Each record
 contains `symbol`, `interval`, and inclusive New York dates `start_date` and
-`end_date`. Coverage marks a completed provider lookup, which can return zero
-bars. Dates outside those ranges have unknown coverage. The next fetch from an
-existing database exports its previously stored ranges without fetching them
-again. Consumers can deduplicate coverage by symbol, interval, and both dates.
+`end_date`. Newly saved ranges also carry `recorded_at`. Coverage marks a
+completed provider lookup, which can return zero bars. Dates outside those ranges
+have unknown coverage. The next fetch from an existing database exports its
+previously stored ranges without fetching them again. These older ranges have
+unknown original save times. Consumers can deduplicate coverage by symbol,
+interval, and both dates.
 
 ## HTTP API
 
@@ -152,7 +164,7 @@ API docs are at [/docs](http://127.0.0.1:8000/docs) on the selected port.
 
 | Method and path | Behavior |
 | --- | --- |
-| `GET /api/v1/stocks/{symbol}/history` | Reads provider history in its original field layout. Pass `start_date` and `end_date` in the query. |
+| `GET /api/v1/stocks/{symbol}/history` | Reads provider history in its original field layout with an uppercase ticker. Missing numeric values are JSON `null`. Pass `start_date` and `end_date` in the query. |
 | `GET /api/v1/stocks/symbols` | Reads the provider's symbol list and caches it until restart. |
 | `POST /api/v1/stocks/{symbol}/bars/fetch` | JSON `start_date`, `end_date`, optional `refresh`. Fills coverage gaps and returns normalized stored bars plus `added` and `covered_through`. |
 | `GET /api/v1/stocks/loaded` | Lists tickers with stored bars and gives their bar counts and date spans. |

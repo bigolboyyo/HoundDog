@@ -25,11 +25,14 @@ class DailyStudyTests(unittest.TestCase):
                     [bar("AAPL", day, close, volumes.get(day, 1000)) for day, close in closes.items()])
         write_lines(self.folder / "theta-coverage-2026-11-22.jsonl", [bar_coverage("AAPL", PREVIOUS_FRI, FRI)])
 
-    def run_study(self, news_records, symbol=AAPL):
+    def run_study(self, news_records, symbol=AAPL, *, latest_closed=FRI):
         write_lines(self.folder / "hounddog-2026-11-16.jsonl", news_records)
         news = read_news(self.folder)
         market = read_market(self.folder)
-        return DailyStudy(NyseCalendar(), news.events, news.checks, market.bars, market.coverage).run(symbol)
+        return DailyStudy(
+            NyseCalendar(), news.events, news.checks, market.bars, market.coverage,
+            latest_closed_session=latest_closed,
+        ).run(symbol)
 
     def hourly_checks(self, topics=("AAPL",)):
         """One check per weekday at 15:00 UTC (10:00 ET), Mon to Fri."""
@@ -139,17 +142,32 @@ class DailyStudyTests(unittest.TestCase):
         self.assertEqual([(event.session, event.placement) for event in study.events], [
             (MON, "before_close"), (TUE, "at_or_after_close"),
         ])
+        self.assertTrue(all(event.price_status == "in_study" for event in study.events))
 
-    def test_news_without_a_stored_move_is_reported_as_pending(self):
+    def test_news_without_price_coverage_changes_status_once_the_session_closes(self):
         records = [event(9, "2026-11-23 22:00", "https://x/late", ["AAPL"])]
+        next_session = date(2026, 11, 24)
 
         study = self.run_study(records)
 
-        self.assertEqual(study.events[0].session, date(2026, 11, 24))
+        self.assertEqual(study.events[0].session, next_session)
         self.assertEqual(study.events[0].placement, "at_or_after_close")
         self.assertEqual(study.events[0].exclusion, "outside_coverage")
         self.assertFalse(study.events[0].has_move)
-        self.assertTrue(any("without a stored move" in note for note in study.notes))
+        self.assertEqual(study.events[0].price_status, "awaiting_close")
+
+        after_close = self.run_study(records, latest_closed=next_session)
+        self.assertEqual(after_close.events[0].price_status, "outside_coverage")
+
+        prior = date(2026, 11, 23)
+        write_lines(self.folder / "theta-bars-2026-11-22.jsonl", [
+            bar("AAPL", prior, 100.0), bar("AAPL", next_session, 102.0),
+        ])
+        write_lines(self.folder / "theta-coverage-2026-11-22.jsonl",
+                    [bar_coverage("AAPL", prior, next_session)])
+        with_prices = self.run_study(records, latest_closed=next_session)
+        self.assertEqual(with_prices.events[0].price_status, "in_study")
+        self.assertEqual(with_prices.news.sessions, 1)
 
     def test_a_missing_bar_is_a_gap_not_a_move(self):
         write_lines(self.folder / "theta-bars-2026-11-22.jsonl",
@@ -163,14 +181,53 @@ class DailyStudyTests(unittest.TestCase):
         self.assertEqual(study.missing_bars, (TUE,))
         self.assertEqual(study.quiet.sessions, 3, "Tuesday and Wednesday have no move")
         self.assertEqual([(entry.session, entry.close, entry.reason) for entry in study.excluded_sessions], [
-            (PREVIOUS_FRI, 100.0, "missing_previous_bar"),
+            (PREVIOUS_FRI, 100.0, "first_price_session"),
             (TUE, None, "missing_bar"),
             (WED, 100.0, "missing_previous_bar"),
         ])
         self.assertEqual([(entry.placement, entry.exclusion) for entry in study.events], [
             ("before_close", "missing_bar"), ("before_close", "missing_previous_bar"),
         ])
+        self.assertEqual([entry.price_status for entry in study.events], ["missing_bar", "missing_previous_bar"])
         self.assertEqual(study.news.sessions, 0)
+
+    def test_first_saved_close_bounds_gap_checks_and_moves_with_earlier_history(self):
+        bar_file = self.folder / "theta-bars-2026-11-22.jsonl"
+        closes = [bar("AAPL", THU, 100.0), bar("AAPL", FRI, 102.0)]
+        write_lines(bar_file, closes)
+        write_lines(self.folder / "theta-coverage-2026-11-22.jsonl",
+                    [bar_coverage("AAPL", date(2025, 11, 20), FRI)])
+        records = [
+            event(1, "2026-11-18 15:00", "https://x/early", ["AAPL"]),
+            event(2, "2026-11-19 15:00", "https://x/first", ["AAPL"]),
+            event(3, "2026-11-20 15:00", "https://x/second", ["AAPL"]),
+        ]
+
+        study = self.run_study(records)
+
+        self.assertEqual(study.missing_bars, ())
+        self.assertEqual([entry.session for entry in study.excluded_sessions], [THU])
+        self.assertEqual([entry.price_status for entry in study.events], [
+            "before_price_history", "first_price_session", "in_study",
+        ])
+        self.assertEqual(study.news.sessions, 1)
+
+        write_lines(bar_file, [bar("AAPL", TUE, 98.0), *closes])
+        study = self.run_study(records)
+        self.assertEqual(study.missing_bars, (WED,))
+        self.assertEqual([entry.price_status for entry in study.events], [
+            "missing_bar", "missing_previous_bar", "in_study",
+        ])
+
+    def test_no_saved_closes_means_no_established_price_history(self):
+        write_lines(self.folder / "theta-bars-2026-11-22.jsonl", [])
+        study = self.run_study([
+            event(1, "2026-11-20 15:00", "https://x/closed", ["AAPL"]),
+            event(2, "2026-11-23 15:00", "https://x/upcoming", ["AAPL"]),
+        ])
+
+        self.assertEqual(study.missing_bars, ())
+        self.assertEqual([entry.price_status for entry in study.events], ["no_price_history", "awaiting_close"])
 
     def test_a_check_at_the_close_belongs_to_that_session(self):
         # 21:00 UTC is 16:00 ET in November: Monday's close.

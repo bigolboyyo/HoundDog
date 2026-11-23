@@ -216,11 +216,16 @@ def _queue_export(connection: sqlite3.Connection, utc_day: str, record: dict[str
     )
 
 
-def _coverage_record(symbol: str, interval: str, start_date: str, end_date: str) -> dict[str, str]:
-    return {
+def _coverage_record(
+    symbol: str, interval: str, start_date: str, end_date: str, *, recorded_at: str | None = None,
+) -> dict[str, str]:
+    record = {
         "schema": COVERAGE_SCHEMA, "symbol": symbol, "interval": interval,
         "start_date": start_date, "end_date": end_date,
     }
+    if recorded_at is not None:
+        record["recorded_at"] = recorded_at
+    return record
 
 
 def _queue_existing_coverage(connection: sqlite3.Connection) -> None:
@@ -243,9 +248,11 @@ def _save_fetch(
     covered_end: date,
     bars: list[dict[str, Any]],
 ) -> int:
-    utc_day = datetime.now(timezone.utc).date().isoformat()
     added = 0
     with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        recorded = datetime.now(timezone.utc)
+        recorded_at, utc_day = recorded.isoformat(), recorded.date().isoformat()
         for bar in bars:
             inserted = connection.execute(
                 """
@@ -258,7 +265,7 @@ def _save_fetch(
                 bar,
             )
             if inserted.rowcount:
-                _queue_export(connection, utc_day, bar)
+                _queue_export(connection, utc_day, {**bar, "recorded_at": recorded_at})
                 added += 1
         if first <= covered_end:
             first_text = first.isoformat()
@@ -268,7 +275,9 @@ def _save_fetch(
                 (symbol, INTERVAL, first_text, end_text),
             )
             if inserted.rowcount:
-                _queue_export(connection, utc_day, _coverage_record(symbol, INTERVAL, first_text, end_text))
+                _queue_export(connection, utc_day, _coverage_record(
+                    symbol, INTERVAL, first_text, end_text, recorded_at=recorded_at,
+                ))
     return added
 
 

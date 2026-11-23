@@ -16,6 +16,7 @@ from unittest.mock import patch
 import scheduled_task
 import watcher
 import watcher_server
+import windows_notifications
 from test_scheduled_task import FakePowerShell
 
 
@@ -71,6 +72,15 @@ class ServerTestCase(unittest.TestCase):
 
 
 class DashboardServerSecurityTests(ServerTestCase):
+    def test_topics_list_does_not_read_article_history(self):
+        with patch.object(watcher_server, "seen_items", side_effect=AssertionError("read history")):
+            response, body = self.request("GET", "/api/topics")
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(body), {"topics": [
+            {"name": "AI tooling", "keywords": ["agent*"], "exclude": []},
+        ]})
+
     def test_only_dashboard_assets_are_served(self):
         for path in ("/watcher.db", "/watch.toml", "/.git/config", "/watcher.py", "/../watch.toml"):
             with self.subTest(path=path):
@@ -666,6 +676,28 @@ class InboxAndFetchStateTests(ServerTestCase):
         self.assertEqual((response.status, json.loads(body)["event_export"]), (200, False))
         self.assertIn("event_export = false", self.config_path.read_text(encoding="utf-8"))
         self.assertFalse(watcher.Config.load(self.config_path).settings.event_export)
+
+
+class NotificationEndpointTests(ServerTestCase):
+    def test_the_test_button_uses_saved_options_and_reports_its_receipt(self):
+        response, _ = self.json_request("PUT", "/api/settings", {
+            "notification_enabled": False, "notification_sound": False, "notification_banner": False,
+        })
+        self.assertEqual(response.status, 200)
+        with patch.object(windows_notifications, "windows_response", return_value=("verified", "Test received.")) as win:
+            response, body = self.json_request("POST", "/api/notifications/test", {})
+            request = win.call_args.args[0]
+            self.assertTrue(request["verify"])
+            self.assertFalse(request["banner"])
+            self.assertIn('silent="true"', request["xml"])
+        self.assertEqual(response.status, 200)
+        receipt = json.loads(body)
+        self.assertEqual(receipt["state"], "verified")
+        self.assertEqual(receipt["trigger"], "test")
+        with patch.object(windows_notifications, "delivery_status", return_value={"state": "ready"}):
+            response, body = self.request("GET", "/api/notifications")
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(body)["last"], receipt)
 
 
 class BackgroundJobEndpointTests(ServerTestCase):

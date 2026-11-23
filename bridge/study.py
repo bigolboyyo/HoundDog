@@ -22,7 +22,8 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from math import isfinite
 from statistics import mean, median
 
 from exports import Bar, BarCoverage, NewsCheck, NewsEvent
@@ -33,6 +34,9 @@ SMALL_SAMPLE = 10
 NEWS, QUIET, UNWATCHED = "news", "quiet", "unwatched"
 MISSING_BAR, MISSING_PREVIOUS_BAR = "missing_bar", "missing_previous_bar"
 INVALID_PREVIOUS_CLOSE, OUTSIDE_COVERAGE = "invalid_previous_close", "outside_coverage"
+BEFORE_PRICE_HISTORY, FIRST_PRICE_SESSION = "before_price_history", "first_price_session"
+NO_PRICE_HISTORY = "no_price_history"
+IN_STUDY, AWAITING_CLOSE = "in_study", "awaiting_close"
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,7 @@ class PlacedEvent(ArticleDetection):
     has_move: bool
     placement: str
     exclusion: str | None
+    price_status: str
 
 
 @dataclass(frozen=True)
@@ -177,8 +182,11 @@ class DailyStudy:
         checks: tuple[NewsCheck, ...],
         bars: tuple[Bar, ...],
         coverage: tuple[BarCoverage, ...],
+        *,
+        latest_closed_session: date | None = None,
     ) -> None:
         self._calendar = calendar
+        self._latest_closed_session = latest_closed_session or calendar.latest_closed_session(datetime.now(timezone.utc))
         self._events = sorted(events, key=lambda event: event.detected_at)
         self._checks = sorted(checks, key=lambda check: check.started_at)
         self._bars = bars
@@ -186,7 +194,8 @@ class DailyStudy:
 
     def run(self, symbol: StudySymbol) -> SymbolStudy:
         bars = {bar.session_date: bar for bar in self._bars if bar.symbol == symbol.symbol and bar.interval == DAILY}
-        scheduled = self._scheduled_sessions(symbol.symbol)
+        first_price = min(bars, default=None)
+        scheduled = self._scheduled_sessions(symbol.symbol, first_price) if first_price is not None else []
         moved: dict[date, Bar] = {}
         excluded: dict[date, ExcludedSession] = {}
         for day in scheduled:
@@ -195,12 +204,13 @@ class DailyStudy:
             if bar is None:
                 excluded[day] = ExcludedSession(day, None, MISSING_BAR)
             elif previous is None:
-                excluded[day] = ExcludedSession(day, bar.close, MISSING_PREVIOUS_BAR)
-            elif not previous.close > 0:
+                reason = FIRST_PRICE_SESSION if day == first_price else MISSING_PREVIOUS_BAR
+                excluded[day] = ExcludedSession(day, bar.close, reason)
+            elif previous.close <= 0 or not isfinite(bar.close / previous.close):
                 excluded[day] = ExcludedSession(day, bar.close, INVALID_PREVIOUS_CLOSE)
             else:
                 moved[day] = previous
-        events, weekend_events, excluded_events = self._place_events(symbol, moved, excluded)
+        events, weekend_events, excluded_events = self._place_events(symbol, moved, excluded, first_price)
         news_days = {event.session for event in events}
         checks = [
             check for check in self._checks
@@ -221,7 +231,7 @@ class DailyStudy:
         )
         news = group_stats([point for point in points if point.kind == NEWS])
         quiet = group_stats([point for point in points if point.kind == QUIET])
-        notes = self._notes(symbol, bars, scheduled, events, bool(checks), bool(watching))
+        notes = self._notes(symbol, bars, scheduled, bool(checks), bool(watching))
         notes += small_sample_note(news.sessions)
         return SymbolStudy(
             symbol=symbol.symbol,
@@ -260,16 +270,16 @@ class DailyStudy:
             notes=tuple(notes + small_sample_note(len(news))),
         )
 
-    def _scheduled_sessions(self, symbol: str) -> list[date]:
-        """Trading days ThetaDesk looked up; outside these, a missing bar is unknown."""
+    def _scheduled_sessions(self, symbol: str, first_price: date) -> list[date]:
+        """Trading days ThetaDesk looked up from the first saved close onward."""
         days: set[date] = set()
         for covered in self._coverage:
             if covered.symbol == symbol and covered.interval == DAILY:
-                days.update(self._calendar.trading_days(covered.start_date, covered.end_date))
+                days.update(self._calendar.trading_days(max(first_price, covered.start_date), covered.end_date))
         return sorted(days)
 
     def _place_events(
-        self, symbol: StudySymbol, moved: dict[date, Bar], excluded: dict[date, ExcludedSession],
+        self, symbol: StudySymbol, moved: dict[date, Bar], excluded: dict[date, ExcludedSession], first_price: date | None,
     ) -> tuple[list[PlacedEvent], list[ArticleDetection], list[ExcludedEvent]]:
         """Keep the earliest match per article in its trading session or weekend."""
         placed = []
@@ -305,12 +315,22 @@ class DailyStudy:
                 placement = "at_or_after_close"
             else:
                 placement = "market_closed"
-            has_move = session in moved
-            exclusion = None
-            if not has_move:
+            if session in moved:
+                exclusion = None
+            elif first_price is None:
+                exclusion = NO_PRICE_HISTORY
+            elif session < first_price:
+                exclusion = BEFORE_PRICE_HISTORY
+            elif session == first_price:
+                exclusion = FIRST_PRICE_SESSION
+            else:
                 exclusion = excluded[session].reason if session in excluded else OUTSIDE_COVERAGE
+            if exclusion is None:
+                price_status = IN_STUDY
+            else:
+                price_status = AWAITING_CLOSE if session > self._latest_closed_session else exclusion
             placed.append(PlacedEvent(
-                *details, session, has_move, placement, exclusion,
+                *details, session, exclusion is None, placement, exclusion, price_status,
             ))
         return placed, weekend, excluded_events
 
@@ -343,7 +363,7 @@ class DailyStudy:
         return bisect_right(check_times, window_end) > bisect_right(check_times, window_start)
 
     def _notes(
-        self, symbol: StudySymbol, bars: dict[date, Bar], scheduled: list[date], events: list[PlacedEvent],
+        self, symbol: StudySymbol, bars: dict[date, Bar], scheduled: list[date],
         has_checks: bool, has_weekday_coverage: bool,
     ) -> list[str]:
         notes = []
@@ -351,7 +371,7 @@ class DailyStudy:
             notes.append(f"No ThetaDesk bars for {symbol.symbol}. Load its history in ThetaDesk first.")
         elif not scheduled:
             notes.append(
-                f"ThetaDesk has bars for {symbol.symbol} but no record of which dates it looked up "
+                f"ThetaDesk has bars for {symbol.symbol} but no record of which dates it looked up in that price history "
                 "(its theta-coverage files), so its sessions cannot be checked for gaps and are left out."
             )
         if not has_weekday_coverage:
@@ -363,7 +383,4 @@ class DailyStudy:
                     f"No HoundDog check has watched {names} yet. Add a HoundDog topic with that name, "
                     "and the study starts counting from its first check."
                 )
-        pending = sum(1 for event in events if not event.has_move)
-        if pending:
-            notes.append(f"{pending} article(s) belong to sessions without a stored move yet (future or missing bars).")
         return notes

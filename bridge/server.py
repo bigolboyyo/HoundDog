@@ -20,13 +20,14 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from config import DEFAULT_CONFIG, BridgeConfig, ConfigError, add_watched, normalize_symbol
+from exports import utc_moment
 from hounddog_client import HoundDogClient, HoundDogRefused, HoundDogUnavailable
 from market_calendar import NyseCalendar
 from overview import Overview, plain
@@ -123,6 +124,16 @@ def validate_date_range(first: date, last: date) -> None:
         raise HTTPException(status_code=422, detail="Start date must be on or before end date.")
 
 
+def observation_window(start_at: str, end_at: str) -> tuple[datetime, datetime]:
+    try:
+        start, end = utc_moment(start_at), utc_moment(end_at)
+    except (ValueError, OverflowError) as error:
+        raise HTTPException(status_code=422, detail="Use ISO 8601 timestamps with explicit UTC offsets.") from error
+    if start >= end:
+        raise HTTPException(status_code=422, detail="start_at must precede end_at.")
+    return start, end
+
+
 def latest_closed_session() -> date:
     return NyseCalendar().latest_closed_session(datetime.now(timezone.utc))
 
@@ -180,8 +191,8 @@ def create_app(
     def overview() -> dict[str, Any]:
         config = load_config()
         data = Overview(config)
-        report = data.report()
         first, last = price_range()
+        report = data.report(latest_closed_session=last)
         return plain({
             "status": data.status(),
             "report": report,
@@ -284,6 +295,32 @@ def create_app(
             "study": plain(Overview(config).ticker(symbol)),
             "prices": [{"session": row["session_date"], "close": row["close"]} for row in rows],
         }
+
+    @app.get("/api/timeline/{symbol}")
+    def timeline(symbol: str, start_at: str, end_at: str) -> dict[str, Any]:
+        symbol = require_symbol(symbol)
+        start, end = observation_window(start_at, end_at)
+        return plain(Overview(load_config()).timeline(symbol, start, end))
+
+    @app.get("/api/v1/research")
+    def research(
+        response: Response,
+        start_at: str,
+        end_at: str,
+        symbol: list[str] | None = Query(default=None),
+        session_start: date | None = None,
+        session_end: date | None = None,
+    ) -> dict[str, Any]:
+        start, end = observation_window(start_at, end_at)
+        symbols = tuple(dict.fromkeys(require_symbol(value) for value in symbol or ()))
+        if (session_start is None) != (session_end is None):
+            raise HTTPException(status_code=422, detail="Provide both session_start and session_end for reference bars.")
+        sessions = None
+        if session_start is not None and session_end is not None:
+            validate_date_range(session_start, session_end)
+            sessions = (session_start, session_end)
+        response.headers["Cache-Control"] = "no-store"
+        return plain(Overview(load_config()).research(symbols, start, end, sessions))
 
     @app.post("/api/shutdown", status_code=202)
     def shutdown(request: Request) -> dict[str, bool]:

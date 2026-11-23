@@ -161,6 +161,7 @@
           <button class="settings-nav-button" type="button" data-panel="appearance">Appearance</button>
           <button class="settings-nav-button" type="button" data-panel="display">Display</button>
           <button class="settings-nav-button" type="button" data-panel="checking">Checking</button>
+          <button class="settings-nav-button" type="button" data-panel="notifications">Notifications</button>
           <button class="settings-nav-button" type="button" data-panel="feeds">Feeds</button>
           <button class="settings-nav-button" type="button" data-panel="data">Data</button>
         </nav>
@@ -296,13 +297,56 @@
               </div>
               <small id="check-mode-hint" class="settings-hint"></small>
             </fieldset>
+          </section>
+          <section id="settings-notifications" class="settings-section" aria-label="Notifications" hidden>
+            <form id="notification-form" class="settings-form">
+              <fieldset id="windows-notification-fields" class="settings-group">
+                <legend>Windows notifications</legend>
+                <p class="settings-description">One summary per saved automatic check, including the background job when this tab is closed.</p>
+                <label class="toggle-row">
+                  <input id="notification-enabled" type="checkbox" role="switch">
+                  <span>Send Windows notifications</span>
+                </label>
+                <label>
+                  Minimum distinct articles per alert
+                  <input id="notification-min-articles" type="number" min="1" max="10000" step="1" required>
+                </label>
+                <label class="toggle-row">
+                  <input id="notification-manual-checks" type="checkbox" role="switch">
+                  <span>Include manual saved checks</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="notification-include-backfill" type="checkbox" role="switch">
+                  <span>Include backfill from first checks or rule changes</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="notification-banner" type="checkbox" role="switch">
+                  <span>Show a banner</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="notification-sound" type="checkbox" role="switch">
+                  <span>Play a sound</span>
+                </label>
+                <p id="windows-notification-status" class="settings-description" aria-live="polite"></p>
+                <p id="notification-last-result" class="settings-description" aria-live="polite"></p>
+                <div class="settings-actions">
+                  <button class="button button-primary" type="submit">Save</button>
+                  <button id="notification-test" class="button button-secondary" type="button">Send test</button>
+                  <button id="notification-refresh" class="text-button" type="button">Check status</button>
+                </div>
+                <small class="settings-hint">
+                  Tests use saved banner and sound settings. Check Notification Center (Win+N) if a banner is muted.
+                  <a href="ms-settings:notifications">Windows notification settings</a>
+                </small>
+              </fieldset>
+            </form>
             <fieldset class="settings-group">
-              <legend>Notifications</legend>
+              <legend>Browser notifications</legend>
               <label class="toggle-row">
                 <input id="notify-new-matches" type="checkbox" role="switch">
-                <span>Desktop notification when an auto-check finds new matches</span>
+                <span>Notify when this tab auto-checks</span>
               </label>
-              <small class="settings-hint">One summary per auto-check in this tab. It shows new matches, article count, and top topics. Preview repeats stay quiet.</small>
+              <small id="browser-notification-status" class="settings-hint"></small>
             </fieldset>
           </section>
           <section id="settings-feeds" class="settings-section" aria-label="Feeds" hidden>

@@ -19,6 +19,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from pydantic_core import PydanticSerializationError
 
 from market_store import (
     BarFetchResult,
@@ -223,11 +224,13 @@ def _refuse_cross_origin(request: Request, detail: str) -> None:
     response_model=StockHistoryResponse,
 )
 def stock_history(
-    response: Response,
     symbol: str = Path(min_length=1),
     start_date: date = Query(),
     end_date: date = Query(),
-) -> StockHistoryResponse:
+) -> Response:
+    symbol = symbol.strip().upper()
+    if not symbol:
+        raise HTTPException(status_code=422, detail="symbol must not be empty")
     try:
         validate_history_range(start_date, end_date)
         history = get_eod_stock_history(symbol, start_date, end_date)
@@ -243,21 +246,17 @@ def stock_history(
         ) from error
 
     try:
-        records = records_from_history(history)
-    except ValueError as error:
+        serialized = StockHistoryResponse(
+            symbol=symbol, start_date=start_date, end_date=end_date, data=records_from_history(history),
+        ).model_dump_json()
+    except (ValueError, PydanticSerializationError, TypeError) as error:
         logger.exception("Could not serialize ThetaData history")
         raise HTTPException(
             status_code=502,
             detail="ThetaData returned an unsupported history format.",
         ) from error
 
-    _set_rate_limit_headers(response)
-    return StockHistoryResponse(
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
-        data=records,
-    )
+    return Response(content=serialized, media_type="application/json", headers=_rate_limit_headers())
 
 
 @app.post("/api/v1/stocks/{symbol}/bars/fetch")

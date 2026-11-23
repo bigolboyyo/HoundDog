@@ -4,6 +4,13 @@ const SYMBOL_PATTERN = /^[A-Z0-9.^_-]{1,16}$/;
 const SHORT_TICKER = 3; // Shorter tickers ("A", "IT") match ordinary words.
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const CHART = { width: 1000, height: 340, left: 80, right: 16, top: 20, bottom: 36 };
+const PLOT_WIDTH = CHART.width - CHART.left - CHART.right;
+const CHART_PRESETS = {
+  "1m": { months: 1, label: "Past month" },
+  "3m": { months: 3, label: "Past 3 months" },
+  "6m": { months: 6, label: "Past 6 months" },
+  "1y": { months: 12, label: "Past year" },
+};
 const EASTERN_TIME = new Intl.DateTimeFormat(undefined, {
   timeZone: "America/New_York",
   dateStyle: "medium",
@@ -15,6 +22,11 @@ const EASTERN_DATE = new Intl.DateTimeFormat("en", {
 const WEEK_DATE = new Intl.DateTimeFormat(undefined, {
   timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
 });
+const WEEKDAY_DATE = new Intl.DateTimeFormat(undefined, {
+  timeZone: "UTC", weekday: "short", month: "short", day: "numeric",
+});
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { timeZone: "UTC", weekday: "short" });
+const EASTERN_CLOCK = new Intl.DateTimeFormat(undefined, { timeZone: "America/New_York", timeStyle: "short" });
 const CLOSE_PRICE = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 const SESSION_LABELS = {
   news: "News",
@@ -22,15 +34,31 @@ const SESSION_LABELS = {
   unwatched: "No qualifying check",
 };
 const MARKET_LABELS = {
+  first_price_session: "First saved close",
   missing_bar: "Missing bar",
   missing_previous_bar: "Previous bar missing",
   invalid_previous_close: "Invalid previous close",
 };
+const ARTICLE_STATUS_LABELS = {
+  in_study: "In study",
+  awaiting_close: "Awaiting close",
+  first_price_session: "First saved close",
+  before_price_history: "Before saved prices",
+  no_price_history: "No saved prices",
+  outside_coverage: "Closed · no recorded price lookup",
+  missing_bar: "Missing daily bar",
+  missing_previous_bar: "Missing prior bar",
+  invalid_previous_close: "Invalid prior close",
+  weekend: "Weekend news",
+};
 const MARKET_EXCLUSIONS = {
+  first_price_session: "This close is the starting point for calculating daily returns.",
+  before_price_history: "This session is earlier than the ticker’s first saved close.",
+  no_price_history: "This ticker has no saved daily closes yet.",
   missing_bar: "ThetaDesk looked up this session, but its daily bar is missing.",
   missing_previous_bar: "The previous trading session’s bar is missing.",
-  invalid_previous_close: "The previous trading session’s close must be positive to calculate a return.",
-  outside_coverage: "This session is outside ThetaDesk’s recorded lookup dates.",
+  invalid_previous_close: "The previous trading session’s close could not be used to calculate a return.",
+  outside_coverage: "This session has closed. Bridge has no record of a completed price lookup for that date.",
 };
 const PLACEMENT_REASONS = {
   before_close: "Found before the close and assigned to that day’s session.",
@@ -42,6 +70,7 @@ const HOUNDDOG_RETRY_MS = 5000;
 const HOUNDDOG_RETRIES = 12;
 
 const elements = {
+  today: document.querySelector("#today"),
   updated: document.querySelector("#updated"),
   refresh: document.querySelector("#refresh"),
   shutdown: document.querySelector("#shutdown"),
@@ -70,22 +99,43 @@ const elements = {
   studyRows: document.querySelector("#study-rows"),
   studyNotes: document.querySelector("#study-notes"),
   studyNotesPanel: document.querySelector("#study-notes-panel"),
-  detailSymbol: document.querySelector("#detail-symbol"),
+  articleStatusScope: document.querySelector("#article-status-scope"),
+  articleStatusList: document.querySelector("#article-status-list"),
   detailTitle: document.querySelector("#detail-title"),
+  viewControls: document.querySelector("#view-controls"),
+  rangePresets: Array.from(document.querySelectorAll("#range-presets button")),
+  viewKind: document.querySelector("#view-kind"),
+  currentWeek: document.querySelector("#current-week"),
+  newsPeriod: document.querySelector("#news-period"),
   dataFreshness: document.querySelector("#data-freshness"),
   detailClose: document.querySelector("#detail-close"),
   pricesThrough: document.querySelector("#prices-through"),
   lastNewsCheck: document.querySelector("#last-news-check"),
+  priceReadiness: document.querySelector("#price-readiness"),
   rangeForm: document.querySelector("#range-form"),
   rangeStart: document.querySelector("#range-start"),
   rangeEnd: document.querySelector("#range-end"),
   rangeReset: document.querySelector("#range-reset"),
+  rangeAll: document.querySelector("#range-all"),
+  rangeTools: document.querySelector("#range-tools"),
   pinRange: document.querySelector("#pin-range"),
   rangeStatus: document.querySelector("#range-status"),
   detailCounts: document.querySelector("#detail-counts"),
   detailSessions: document.querySelector("#detail-sessions"),
   chart: document.querySelector("#chart"),
   chartKey: document.querySelector("#chart-key"),
+  dailyMoves: document.querySelector("#daily-moves"),
+  dailyReturns: document.querySelector("#daily-returns"),
+  dailyVolumePanel: document.querySelector("#daily-volume-panel"),
+  dailyVolume: document.querySelector("#daily-volume"),
+  moveComparison: document.querySelector("#move-comparison"),
+  moveScale: document.querySelector("#move-scale"),
+  moveScaleMax: document.querySelector("#move-scale-max"),
+  newsMoveSummary: document.querySelector("#news-move-summary"),
+  newsMoveDots: document.querySelector("#news-move-dots"),
+  quietMoveSummary: document.querySelector("#quiet-move-summary"),
+  quietMoveDots: document.querySelector("#quiet-move-dots"),
+  moveComparisonNote: document.querySelector("#move-comparison-note"),
   studyDetails: document.querySelector("#study-details"),
   coverageStrip: document.querySelector("#coverage-strip"),
   coverageKey: document.querySelector("#coverage-key"),
@@ -115,6 +165,7 @@ const state = {
   refreshId: 0,
   detailRequestId: 0,
   detailSymbol: "",
+  rangePreset: "week",
   range: null,
   session: "",
   coverageDay: "",
@@ -124,6 +175,7 @@ const state = {
   pinsRequestId: 0,
   pinSaveBusy: false,
   detailView: null,
+  detailStudy: null,
   weeklyNews: { events: [], weekendEvents: [], week: "", includeWeekend: false },
   hounddogRetry: { timer: null, attempts: 0 },
 };
@@ -204,6 +256,13 @@ function renderSources(overview) {
       ? market.symbols.map((symbol) => [symbol.symbol, `${symbol.bars} sessions, ${symbol.first} to ${symbol.last}`])
       : [["Prices", "none loaded yet"]]),
   ]);
+  const { symbols, groups } = overview.report;
+  const notes = [
+    ...symbols.flatMap((study) => study.notes.map((note) => `${study.symbol}: ${note}`)),
+    ...groups.flatMap((group) => group.notes.map((note) => `${group.name}: ${note}`)),
+  ];
+  elements.studyNotes.replaceChildren(...notes.map((note) => element("li", { textContent: note })));
+  elements.studyNotes.hidden = !notes.length;
 }
 
 function watchedSymbols(overview) {
@@ -212,39 +271,47 @@ function watchedSymbols(overview) {
 
 function renderWatchlist(overview) {
   const target = overview.thetadesk.latest_session;
-  elements.marketTarget.textContent = `Latest NYSE close · ${target}`;
+  elements.marketTarget.textContent = `Latest NYSE close · ${WEEKDAY_DATE.format(dateAtUtcMidnight(target))}`;
   const cards = overview.watchlist.map((item) => {
     const request = state.priceRequests.get(item.symbol);
     const refresh = Boolean(request?.retry || item.missing_bars);
     const stale = !item.price_session || item.price_session < target;
-    const actions = [element("button", { type: "button", textContent: "View study" })];
-    actions[0].addEventListener("click", () => openStudy(item.symbol));
+    const date = item.price_session ? WEEKDAY_DATE.format(dateAtUtcMidnight(item.price_session)) : "No saved close";
+    const close = item.last_close === null ? "—" : CLOSE_PRICE.format(item.last_close);
+    const title = element("button", {
+      type: "button", className: "ticker-select", title: `${item.symbol} · ${date}`,
+    }, [
+      element("strong", { textContent: item.symbol }),
+      element("span", { textContent: close }),
+    ]);
+    title.dataset.symbol = item.symbol;
+    title.setAttribute("aria-pressed", String(item.symbol === state.detailSymbol));
+    title.addEventListener("click", () => openStudy(item.symbol, false));
+    const actions = [];
     if (overview.thetadesk.enabled && (stale || refresh || request?.pending)) {
       const label = !item.price_session ? "Load price history" : refresh ? "Retry missing bars" : "Update through latest close";
       const load = element("button", {
-        type: "button", className: "primary", disabled: Boolean(request?.pending),
-        textContent: request?.pending ? "Loading prices…" : label,
+        type: "button", className: "ticker-load", title: label, disabled: Boolean(request?.pending),
+        textContent: request?.pending ? "Loading…" : !item.price_session ? "Load" : refresh ? "Retry" : "Update",
       });
+      load.setAttribute("aria-label", `${label} for ${item.symbol}`);
       load.addEventListener("click", () => loadPrice(item.symbol, refresh, {
         after: !refresh ? item.price_session : null,
       }));
-      actions.unshift(load);
+      actions.push(load);
     }
-    const title = element("div", { className: "ticker-card-title" }, [
-      element("h3", { textContent: item.symbol }),
-      element("strong", { textContent: item.last_close === null ? "—" : CLOSE_PRICE.format(item.last_close) }),
-    ]);
-    const priceDate = item.price_session ? `Close · ${item.price_session}` : "No saved prices";
+    const status = item.missing_bars
+      ? `${item.missing_bars} price ${item.missing_bars === 1 ? "gap" : "gaps"}`
+      : item.price_session ? date : "No saved prices";
     return element("article", { className: "ticker-card" }, [
-      title, element("p", { className: "muted ticker-meta", textContent: priceDate }),
-      element("p", { className: "ticker-sample", textContent: `${item.news} news · ${item.quiet} quiet` }),
-      ...(item.missing_bars ? [element("p", {
-        className: "muted ticker-meta", textContent: `${item.missing_bars} price gaps in the latest year`,
-      })] : []),
+      title,
+      element("div", { className: "ticker-meta" }, [
+        element("span", { className: stale || refresh ? "ticker-pending" : "muted", textContent: status }),
+        ...actions,
+      ]),
       ...(request?.message ? [element("p", {
-        className: request.error ? "action-error" : "muted", textContent: request.message,
+        className: request.error ? "ticker-message action-error" : "ticker-message muted", textContent: request.message,
       })] : []),
-      element("div", { className: "ticker-actions" }, actions),
     ]);
   });
   elements.watchlist.replaceChildren(...(cards.length ? cards : [
@@ -398,6 +465,75 @@ function studyRow(name, study, className = "") {
   ]);
 }
 
+function articlePriceStatus(event) {
+  if (event.price_status) return event.price_status;
+  // Static assets can update before the running Bridge process is restarted.
+  if (event.has_move) return "in_study";
+  if (event.session > state.overview.thetadesk.latest_session) return "awaiting_close";
+  return event.exclusion;
+}
+
+function countArticleStatus(events) {
+  const counts = new Map();
+  for (const event of events) {
+    const status = articlePriceStatus(event);
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function renderArticleStatus(studies) {
+  const last = state.overview.thetadesk.latest_session;
+  elements.articleStatusScope.textContent =
+    `All saved live detections · Latest NYSE close ${WEEK_DATE.format(dateAtUtcMidnight(last))}`;
+  const totals = studies.map((study) => study.events.length + (study.weekend_events?.length ?? 0));
+  const scale = Math.max(1, ...totals);
+  elements.articleStatusList.replaceChildren(...studies.map((study, index) => {
+    const counts = countArticleStatus(study.events);
+    counts.set("weekend", study.weekend_events?.length ?? 0);
+    const awaitingDates = [...new Set(study.events
+      .filter((event) => articlePriceStatus(event) === "awaiting_close")
+      .map((event) => event.session))].sort();
+    const afterClose = study.events.filter((event) => event.placement === "at_or_after_close").length;
+    const total = totals[index];
+    const bar = svg("svg", { viewBox: `0 0 ${scale} 10`, preserveAspectRatio: "none", "aria-hidden": true });
+    const labels = [];
+    let offset = 0;
+    for (const [status, name] of Object.entries(ARTICLE_STATUS_LABELS)) {
+      const count = counts.get(status);
+      if (!count) continue;
+      const segment = svg("rect", {
+        x: offset, y: 0, width: count, height: 10, class: `article-status-color ${status}`,
+      });
+      segment.append(svg("title", {}, `${name} · ${count}`));
+      bar.append(segment);
+      offset += count;
+      const dates = status === "awaiting_close"
+        ? ` · ${awaitingDates.map((day) => WEEK_DATE.format(dateAtUtcMidnight(day))).join(", ")}`
+        : "";
+      const swatch = element("span", { className: `article-status-color ${status}` });
+      swatch.setAttribute("aria-hidden", "true");
+      labels.push(element("li", { className: "article-status-label" }, [
+        swatch, element("strong", { textContent: count }), ` ${name}${dates}`,
+      ]));
+    }
+    return element("li", { className: "article-status-row" }, [
+      element("div", { className: "article-status-ticker" }, [
+        element("strong", { textContent: study.symbol }),
+        element("span", { className: "muted", textContent: `${total} live ${total === 1 ? "article" : "articles"}` }),
+      ]),
+      ...(total ? [
+        bar,
+        element("ul", { className: "article-status-labels" }, labels),
+      ] : []),
+      ...(afterClose ? [element("small", {
+        className: "article-status-after-close",
+        title: "These weekday detections are included in the status bar above.",
+      }, [element("strong", { textContent: afterClose }), " after close → next trading session"])] : []),
+    ]);
+  }));
+}
+
 function renderStudy(report) {
   const rows = [
     ...report.symbols.map((study) => studyRow(study.symbol, study)),
@@ -406,12 +542,8 @@ function renderStudy(report) {
   elements.studyRows.replaceChildren(...(rows.length ? rows : [element("tr", {}, [
     element("td", { colSpan: 8, textContent: "No tickers studied yet. Watch one above." }),
   ])]));
-  const notes = [
-    ...report.symbols.flatMap((study) => study.notes.map((note) => `${study.symbol}: ${note}`)),
-    ...report.groups.flatMap((group) => group.notes.map((note) => `${group.name}: ${note}`)),
-  ];
-  elements.studyNotes.replaceChildren(...notes.map((note) => element("li", { textContent: note })));
-  elements.studyNotesPanel.hidden = !notes.length;
+  renderArticleStatus(report.symbols);
+  elements.studyNotesPanel.hidden = !report.symbols.length;
 }
 
 function svg(name, attributes = {}, text = "") {
@@ -423,12 +555,16 @@ function svg(name, attributes = {}, text = "") {
 
 function makeDetailView(study) {
   if (!study) return null;
-  const range = state.range;
-  const within = (day) => !range || (day >= range.first && day <= range.last);
+  const weekly = isWeeklyView();
+  const range = chartRange();
+  const within = (day) => day >= range.first && day <= range.last;
   const pin = state.pinStudy;
-  const pinRange = pin?.study.symbol === study.symbol && range?.first === pin.range.first && range?.last === pin.range.last;
+  const pinRange = state.range && pin?.study.symbol === study.symbol &&
+    range.first === pin.range.first && range.last === pin.range.last;
   const prices = (pinRange ? pin.prices : study.prices).filter((point) => within(point.session));
   const detail = { ...study,
+    range,
+    weekly,
     prices,
     sessions: study.sessions.filter((point) => within(point.session)),
     excluded_sessions: study.excluded_sessions.filter((point) => within(point.session)),
@@ -441,7 +577,19 @@ function makeDetailView(study) {
     timeline.set(point.session, { ...point, close: price?.close ?? point.close });
   }
   for (const point of detail.sessions) timeline.set(point.session, point);
-  detail.points = [...timeline.values()].sort((left, right) => left.session.localeCompare(right.session));
+  if (!weekly) {
+    detail.points = [...timeline.values()].sort((left, right) => left.session.localeCompare(right.session));
+  } else {
+    const prior = study.prices.findLast((point) => point.session < range.first);
+    detail.baseline = prior ? { ...prior, baseline: true } : null;
+    detail.points = [
+      ...(detail.baseline ? [detail.baseline] : []),
+      ...Array.from({ length: 5 }, (_, offset) => {
+        const day = shiftDay(range.first, offset);
+        return timeline.get(day) ?? { session: day, close: null };
+      }),
+    ];
+  }
   return detail;
 }
 
@@ -461,6 +609,16 @@ function shiftDay(day, days) {
   return date.toISOString().slice(0, 10);
 }
 
+function shiftMonths(day, months) {
+  const date = dateAtUtcMidnight(day);
+  const originalDay = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  date.setUTCDate(Math.min(originalDay, lastDay));
+  return date.toISOString().slice(0, 10);
+}
+
 function weekStart(day) {
   const weekday = dateAtUtcMidnight(day).getUTCDay();
   return shiftDay(day, -((weekday + 6) % 7));
@@ -468,6 +626,32 @@ function weekStart(day) {
 
 function currentNewsWeek() {
   return weekStart(easternDate(new Date().toISOString()));
+}
+
+function activeWeek() {
+  return state.weeklyNews.week || currentNewsWeek();
+}
+
+function isWeeklyView() {
+  return !state.range && state.rangePreset === "week";
+}
+
+function chartRange() {
+  if (state.range) return state.range;
+  if (isWeeklyView()) {
+    const week = activeWeek();
+    return { first: week, last: shiftDay(week, 4) };
+  }
+  const today = easternDate(new Date().toISOString());
+  return { first: shiftMonths(today, -CHART_PRESETS[state.rangePreset].months), last: today };
+}
+
+function dateSpan(first, last) {
+  return WEEK_DATE.formatRange(dateAtUtcMidnight(first), dateAtUtcMidnight(last));
+}
+
+function sessionX(index, count) {
+  return CHART.left + ((index + 0.5) / count) * PLOT_WIDTH;
 }
 
 function renderChart(view) {
@@ -482,27 +666,35 @@ function renderChart(view) {
     }));
     return;
   }
-  const root = svg("svg", { viewBox: `0 0 ${CHART.width} ${CHART.height}` });
+  const root = svg("svg", { viewBox: `0 0 ${CHART.width} ${view.weekly ? CHART.height - 20 : CHART.height}` });
   const low = closes.reduce((best, value) => Math.min(best, value));
   const high = closes.reduce((best, value) => Math.max(best, value));
   const span = high - low;
-  const plotWidth = CHART.width - CHART.left - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
-  const x = (index) => CHART.left + ((index + 0.5) / points.length) * plotWidth;
   const y = (close) => CHART.top + (span ? 1 - (close - low) / span : 0.5) * plotHeight;
 
   root.append(
     svg("line", { x1: CHART.left, x2: CHART.width - CHART.right, y1: y(high), y2: y(high), class: "grid" }),
     svg("text", { x: CHART.left - 8, y: y(high) + 4, "text-anchor": "end", class: "axis" }, high.toFixed(2)),
-    svg("text", { x: CHART.left, y: CHART.height - 8, class: "axis" }, points[0].session),
   );
   if (span) root.append(
     svg("line", { x1: CHART.left, x2: CHART.width - CHART.right, y1: y(low), y2: y(low), class: "grid" }),
     svg("text", { x: CHART.left - 8, y: y(low) + 4, "text-anchor": "end", class: "axis" }, low.toFixed(2)),
   );
-  if (points.length > 1) root.append(svg("text", {
-    x: CHART.width - CHART.right, y: CHART.height - 8, "text-anchor": "end", class: "axis",
-  }, points.at(-1).session));
+  if (view.weekly) {
+    for (const [index, point] of points.entries()) {
+      if (point.baseline) continue;
+      const x = sessionX(index, points.length);
+      root.append(svg("line", {
+        x1: x, x2: x, y1: CHART.top, y2: CHART.height - CHART.bottom, class: "week-guide",
+      }));
+    }
+  } else {
+    root.append(svg("text", { x: CHART.left, y: CHART.height - 8, class: "axis" }, points[0].session));
+    if (points.length > 1) root.append(svg("text", {
+      x: CHART.width - CHART.right, y: CHART.height - 8, "text-anchor": "end", class: "axis",
+    }, points.at(-1).session));
+  }
   let segment = [];
   const drawSegment = () => {
     if (segment.length === 1) {
@@ -514,14 +706,27 @@ function renderChart(view) {
     segment = [];
   };
   for (const [index, point] of points.entries()) {
-    if (point.close === null) drawSegment();
-    else segment.push([x(index), y(point.close)]);
+    if (point.baseline) {
+      const marker = svg("circle", {
+        cx: sessionX(index, points.length), cy: y(point.close), r: 4, class: "prior-close",
+      });
+      marker.append(svg("title", {}, `Prior saved close · ${point.session} · ${CLOSE_PRICE.format(point.close)}`));
+      const first = points.findIndex((entry) => !entry.baseline && entry.close !== null);
+      if (first >= 0 && Number.isFinite(points[first].change)) {
+        root.append(svg("line", {
+          x1: sessionX(index, points.length), y1: y(point.close),
+          x2: sessionX(first, points.length), y2: y(points[first].close), class: "prior-link",
+        }));
+      }
+      root.append(marker);
+    } else if (point.close === null) drawSegment();
+    else segment.push([sessionX(index, points.length), y(point.close)]);
   }
   drawSegment();
   for (const [index, point] of points.entries()) {
     if (point.kind !== "news" || point.close === null) continue;
     const marker = svg("circle", {
-      cx: x(index), cy: y(point.close), r: 5.5, class: "news",
+      cx: sessionX(index, points.length), cy: y(point.close), r: 5.5, class: "news",
       role: "button", tabindex: 0, "aria-label": `See news on ${point.session}`,
       "aria-controls": "session-evidence", "data-session": point.session,
     });
@@ -535,7 +740,149 @@ function renderChart(view) {
     });
     root.append(marker);
   }
-  elements.chart.replaceChildren(root);
+  if (!view.weekly) {
+    elements.chart.replaceChildren(root);
+  } else {
+    const labels = points.map((point) => {
+      const day = dateAtUtcMidnight(point.session);
+      return element("span", {
+        className: "week-axis", textContent: point.baseline ? "Prior close" : `${WEEKDAY.format(day)} ${day.getUTCDate()}`,
+      });
+    });
+    elements.chart.replaceChildren(root, element("div", {
+      className: view.baseline ? "week-dates-axis with-prior" : "week-dates-axis",
+    }, labels));
+  }
+}
+
+function dailyStrip(points, returns) {
+  const field = returns ? "change" : "volume_ratio";
+  const values = points.map((point) => point[field]).filter(Number.isFinite);
+  if (!values.length) {
+    return element("p", {
+      className: "analytics-empty muted",
+      textContent: returns ? "No daily returns in this range." : "No volume ratios in this range.",
+    });
+  }
+
+  const largest = values.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+  const high = returns ? Math.max(0.0001, largest) : Math.max(1, Math.ceil(largest));
+  const low = returns ? -high : 0;
+  const top = 21;
+  const bottom = 101;
+  const y = (value) => top + ((high - value) / (high - low)) * (bottom - top);
+  const baseline = y(0);
+  const barWidth = Math.min(24, PLOT_WIDTH / points.length * 0.76);
+  const root = svg("svg", {
+    viewBox: `0 0 ${CHART.width} 114`,
+    role: "img",
+    "aria-label": returns ? "Daily returns by trading session" : "Daily volume as a multiple of the ticker median",
+  });
+  const format = (value) => returns ? `${value > 0 ? "+" : ""}${percent(value)}` : ratio(value);
+  const guides = returns ? [high, 0, low] : [...new Set([high, 1])];
+  for (const value of guides) {
+    const level = y(value);
+    root.append(
+      svg("line", {
+        x1: CHART.left, x2: CHART.width - CHART.right, y1: level, y2: level,
+        class: value === (returns ? 0 : 1) ? "strip-reference" : "grid",
+      }),
+      svg("text", {
+        x: CHART.left - 8, y: level + 5, "text-anchor": "end", class: "axis",
+      }, returns ? format(value) : `${value}×`),
+    );
+  }
+
+  for (const [index, point] of points.entries()) {
+    const value = point[field];
+    if (!Number.isFinite(value)) continue;
+    const x = sessionX(index, points.length);
+    const height = Math.max(1, Math.abs(y(value) - baseline));
+    const bar = svg("rect", {
+      x: x - barWidth / 2, y: value < 0 ? baseline : baseline - height,
+      width: barWidth, height,
+      class: returns ? `return-bar ${value > 0 ? "gain" : value < 0 ? "loss" : "flat"}` : "volume-bar",
+      "data-session": point.session,
+    });
+    bar.append(svg("title", {}, `${point.session} · ${format(value)}`));
+    root.append(bar);
+    if (returns && point.kind === "news") {
+      const marker = svg("circle", { cx: x, cy: 8, r: 5, class: "news", "data-session": point.session });
+      marker.append(svg("title", {}, `${point.session} · News session · ${format(value)}`));
+      root.append(marker);
+    }
+  }
+  return root;
+}
+
+function renderDailyMoves(view) {
+  elements.dailyMoves.hidden = !view;
+  if (!view) return;
+  elements.dailyReturns.replaceChildren(dailyStrip(view.points, true));
+  elements.dailyVolumePanel.hidden = !view.sessions.length;
+  elements.dailyVolume.replaceChildren(dailyStrip(view.points, false));
+}
+
+function renderMoveDots(container, summary, sessions, limit, kind) {
+  if (!sessions.length) {
+    summary.textContent = "0 sessions";
+    container.replaceChildren();
+    return;
+  }
+
+  const middle = Math.floor(sessions.length / 2);
+  const median = (sessions[middle].move + sessions[Math.floor((sessions.length - 1) / 2)].move) / 2;
+  const count = `${sessions.length} ${sessions.length === 1 ? "session" : "sessions"}`;
+  summary.textContent = `${count} · Median ${percent(median)}`;
+  const width = 800;
+  const inset = 10;
+  const x = (move) => inset + (move / limit) * (width - inset * 2);
+  const lanes = [36, 26, 46, 16, 56, 6, 66];
+  const lastPosition = lanes.map(() => -Infinity);
+  const plot = svg("svg", {
+    viewBox: `0 0 ${width} 72`, role: "img",
+    "aria-label": `${count}, one dot per session, median absolute move ${percent(median)}`,
+    class: kind,
+  });
+  const medianLine = svg("line", { x1: x(median), x2: x(median), y1: 4, y2: 68, class: "median-line" });
+  medianLine.append(svg("title", {}, `Median ${percent(median)}`));
+  plot.append(
+    svg("line", { x1: inset, x2: width - inset, y1: 36, y2: 36, class: "dot-guide" }),
+    medianLine,
+  );
+  for (const [index, point] of sessions.entries()) {
+    const cx = x(point.move);
+    const openLane = lastPosition.findIndex((last) => cx - last >= 9);
+    const lane = openLane < 0 ? index % lanes.length : openLane;
+    lastPosition[lane] = cx;
+    const dot = svg("circle", {
+      cx, cy: lanes[lane], r: 4.5, class: "move-dot", "data-session": point.session,
+    });
+    dot.append(svg("title", {}, `${point.session} · ${percent(point.move)} absolute move`));
+    plot.append(dot);
+  }
+  container.replaceChildren(plot);
+}
+
+function renderMoveComparison(view) {
+  elements.moveComparison.hidden = !view;
+  if (!view) return;
+  const moves = view.sessions
+    .filter((point) => Number.isFinite(point.change) && (point.kind === "news" || point.kind === "quiet"))
+    .map((point) => ({ session: point.session, kind: point.kind, move: Math.abs(point.change) }))
+    .sort((left, right) => left.move - right.move);
+  const limit = Math.max(0.0001, moves.at(-1)?.move ?? 0);
+  const news = moves.filter((point) => point.kind === "news");
+  const quiet = moves.filter((point) => point.kind === "quiet");
+  renderMoveDots(elements.newsMoveDots, elements.newsMoveSummary, news, limit, "news");
+  renderMoveDots(elements.quietMoveDots, elements.quietMoveSummary, quiet, limit, "quiet");
+  elements.moveScale.hidden = !moves.length;
+  elements.moveScaleMax.textContent = percent(limit);
+  elements.moveComparisonNote.textContent = !news.length || !quiet.length
+    ? "A comparison needs both news and quiet sessions."
+    : Math.min(news.length, quiet.length) < 10
+      ? "Small sample. Each dot is one session."
+      : "Each dot is one session.";
 }
 
 function checkKind(entry) {
@@ -567,8 +914,8 @@ function renderCoverage(view) {
   const today = easternDate(new Date().toISOString());
   const firstCheck = view.check_days[0]?.day;
   const started = firstCheck ?? today;
-  const first = state.range?.first > started ? state.range.first : started;
-  const last = state.range?.last < today ? state.range.last : today;
+  const first = view.range.first > started ? view.range.first : started;
+  const last = view.range.last < today ? view.range.last : today;
   const end = new Date(`${last}T00:00:00Z`);
   const days = [];
   for (const day = new Date(`${first}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
@@ -658,36 +1005,26 @@ function articleTitle(event) {
 }
 
 function renderWeeklyNews() {
-  const { events, weekendEvents, week, includeWeekend } = state.weeklyNews;
-  const current = currentNewsWeek();
-  const first = week || current;
+  const { events, weekendEvents, includeWeekend } = state.weeklyNews;
+  const first = state.range || isWeeklyView() ? activeWeek() : currentNewsWeek();
   const friday = shiftDay(first, 4);
   const sunday = shiftDay(first, 6);
-  const last = includeWeekend ? sunday : friday;
-  let hasPrevious = false;
   function entriesForWeek(articles, through) {
     return articles.filter((event) => {
       const day = easternDate(event.detected_at);
-      if (day < first) hasPrevious = true;
       return day >= first && day <= through;
     });
   }
   const weekdays = entriesForWeek(events, friday);
   const weekend = entriesForWeek(weekendEvents, sunday);
 
-  elements.weekDates.textContent = WEEK_DATE.formatRange(dateAtUtcMidnight(first), dateAtUtcMidnight(last));
-  elements.weekPrev.disabled = !hasPrevious;
-  elements.weekNext.disabled = first >= current;
+  elements.newsPeriod.hidden = isWeeklyView() && !includeWeekend;
+  elements.newsPeriod.textContent = dateSpan(first, includeWeekend ? sunday : friday);
   elements.weekdaysNews.setAttribute("aria-pressed", String(!includeWeekend));
   elements.fullWeekNews.setAttribute("aria-pressed", String(includeWeekend));
   elements.fullWeekNews.textContent = weekend.length ? `Full week · ${weekend.length} weekend` : "Full week";
-  const withoutMove = weekdays.filter((event) => !event.has_move).length;
   elements.weeklyNewsCount.textContent = weekdays.length
-    ? [
-      `${weekdays.length} weekday ${weekdays.length === 1 ? "article" : "articles"}`,
-      withoutMove ? `${withoutMove} without a price move` : "",
-      "Detected in ET",
-    ].filter(Boolean).join(" · ")
+    ? `${weekdays.length} weekday ${weekdays.length === 1 ? "article" : "articles"} · Detected in ET`
     : "No live weekday articles found.";
   elements.weekendNews.hidden = !includeWeekend || !weekend.length;
   renderWeeklyEntries(elements.weeklyNewsList, weekdays);
@@ -695,36 +1032,60 @@ function renderWeeklyNews() {
 }
 
 function renderWeeklyEntries(list, entries) {
-  const rows = document.createDocumentFragment();
-  for (const event of entries.reverse()) {
-    const meta = [
-      element("time", {
-        dateTime: event.detected_at, textContent: EASTERN_TIME.format(new Date(event.detected_at)), title: "Detected in ET",
-      }),
-    ];
-    if (event.session) {
-      const awaiting = event.session > state.overview.thetadesk.latest_session ? "Awaiting close" : "Price data pending";
-      const status = event.has_move ? "" : MARKET_LABELS[event.exclusion] ?? awaiting;
-      meta.push(` · Session ${event.session}${status ? ` · ${status}` : ""}`);
-    }
-    rows.append(element("li", {}, [
-      articleTitle(event),
-      element("div", { className: "weekly-news-meta muted" }, meta),
-    ]));
+  const byDay = new Map();
+  for (const event of entries) {
+    const day = event.session || easternDate(event.detected_at);
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(event);
   }
-  list.replaceChildren(rows);
+  const groups = [...byDay].sort(([left], [right]) => right.localeCompare(left)).map(([day, articles]) => {
+    const statuses = new Set(articles.map((event) => event.session && !event.has_move
+      ? ARTICLE_STATUS_LABELS[articlePriceStatus(event)] : ""));
+    const shared = statuses.size === 1 ? [...statuses][0] : "";
+    const items = articles.reverse().map((event) => {
+      const detectedAt = new Date(event.detected_at);
+      const detectedDay = easternDate(event.detected_at);
+      const label = detectedDay === day ? EASTERN_CLOCK.format(detectedAt) : EASTERN_TIME.format(detectedAt);
+      const status = !shared && event.session && !event.has_move
+        ? ARTICLE_STATUS_LABELS[articlePriceStatus(event)] : "";
+      const meta = [
+        element("time", { dateTime: event.detected_at, textContent: label, title: "Detected in ET" }),
+      ];
+      if (event.placement === "at_or_after_close") meta.push(" · After close");
+      if (status) meta.push(` · ${status}`);
+      return element("li", { className: "weekly-article" }, [
+        articleTitle(event),
+        element("div", { className: "weekly-news-meta muted" }, meta),
+      ]);
+    });
+    const heading = [element("time", { dateTime: day, textContent: WEEKDAY_DATE.format(dateAtUtcMidnight(day)) })];
+    if (shared) {
+      const pending = articles.every((event) => articlePriceStatus(event) === "awaiting_close");
+      heading.push(element("span", { className: pending ? "ticker-pending" : "muted", textContent: shared }));
+    }
+    return element("li", { className: "weekly-group" }, [
+      element("div", { className: "weekly-day" }, heading),
+      element("ul", {}, items),
+    ]);
+  });
+  list.replaceChildren(...groups);
 }
 
-function changeNewsWeek(days) {
-  const current = currentNewsWeek();
-  const next = shiftDay(state.weeklyNews.week || current, days);
-  state.weeklyNews.week = next >= current ? "" : next;
-  renderWeeklyNews();
+function openWeek(week) {
+  state.weeklyNews.week = week >= currentNewsWeek() ? "" : week;
+  state.rangePreset = "week";
+  setChartRange(null);
+}
+
+function changeWeek(days) {
+  openWeek(shiftDay(activeWeek(), days));
 }
 
 function articleOutcome(event) {
   if (event.has_move) return "Counts toward a news session.";
-  return MARKET_EXCLUSIONS[event.exclusion] ?? "Price data pending.";
+  const status = articlePriceStatus(event);
+  if (status === "awaiting_close") return "The assigned trading session is still awaiting its close.";
+  return MARKET_EXCLUSIONS[status] ?? "Price data pending.";
 }
 
 function showSessionNews(day) {
@@ -765,7 +1126,7 @@ function renderSessions(study) {
   const afterFirstCheck = (day) => study.first_check_session && day >= study.first_check_session;
   const included = study.sessions.filter((point) => point.kind !== "unwatched" || afterFirstCheck(point.session));
   const exclusions = study.excluded_sessions.filter((point) =>
-    point.reason === "missing_bar" || afterFirstCheck(point.session));
+    point.reason === "missing_bar" || point.reason === "first_price_session" || afterFirstCheck(point.session));
   const counts = [
     ["News", included.filter((point) => point.kind === "news").length],
     ["Quiet", included.filter((point) => point.kind === "quiet").length],
@@ -823,27 +1184,53 @@ function renderDetail(report) {
   if (pinned && !studies.some((study) => study.symbol === pinned.symbol)) studies.push(pinned);
   const study = studies.find((entry) => entry.symbol === state.detailSymbol) ?? studies[0];
   state.detailSymbol = study?.symbol ?? "";
+  state.detailStudy = study ?? null;
   elements.detailTitle.textContent = study ? `${study.symbol} study` : "Ticker study";
-  elements.detailSymbol.replaceChildren(...studies.map((study) =>
-    element("option", { value: study.symbol, textContent: study.symbol })));
-  elements.detailSymbol.value = state.detailSymbol;
-  elements.detailSymbol.disabled = !studies.length;
+  for (const ticker of elements.watchlist.querySelectorAll(".ticker-select")) {
+    ticker.setAttribute("aria-pressed", String(ticker.dataset.symbol === state.detailSymbol));
+  }
   const view = makeDetailView(study);
   state.detailView = view;
-  const lastPrice = view?.prices.at(-1);
+  const lastPrice = view?.prices.at(-1) ?? view?.baseline;
   const lastCheck = state.overview.status.hounddog.last_check;
+  const week = activeWeek();
+  const current = currentNewsWeek();
+  const latestSession = state.overview.thetadesk.latest_session;
+  const latestSaved = study?.prices.at(-1)?.session;
+  const weekly = isWeeklyView();
+  const firstClosePending = weekly && latestSession < week;
+  const needsPrices = !latestSaved || latestSaved < latestSession;
+  const readiness = firstClosePending ? "First close pending" : needsPrices ? "Close not saved" : "Up to date";
   elements.dataFreshness.hidden = !view;
   elements.detailClose.textContent = lastPrice ? CLOSE_PRICE.format(lastPrice.close) : "—";
   elements.pricesThrough.textContent = lastPrice
-    ? WEEK_DATE.format(dateAtUtcMidnight(lastPrice.session))
-    : "No prices in range";
+    ? WEEKDAY_DATE.format(dateAtUtcMidnight(lastPrice.session))
+    : "None saved in view";
   elements.lastNewsCheck.textContent = lastCheck ? EASTERN_TIME.format(new Date(lastCheck)) : "No checks recorded";
-  const first = state.range?.first ?? view?.prices[0]?.session;
-  const last = state.range?.last ?? lastPrice?.session;
-  elements.rangeForm.hidden = !view;
-  elements.rangeStart.value = first ?? "";
-  elements.rangeEnd.value = last ?? "";
+  elements.priceReadiness.parentElement.hidden = Boolean(state.range) || (weekly && week !== current);
+  elements.priceReadiness.textContent = readiness;
+  elements.priceReadiness.className = firstClosePending || needsPrices ? "ticker-pending" : "prices-current";
+  elements.viewControls.hidden = !view;
+  elements.viewKind.textContent = state.range ? "Custom range"
+    : weekly ? (week === current ? "Current week" : "Study week")
+      : CHART_PRESETS[state.rangePreset].label;
+  elements.weekDates.textContent = view ? dateSpan(view.range.first, view.range.last) : "";
+  for (const button of elements.rangePresets) {
+    button.setAttribute("aria-pressed", String(!state.range && button.dataset.preset === state.rangePreset));
+  }
+  elements.weekPrev.hidden = !weekly;
+  elements.weekNext.hidden = !weekly;
+  elements.weekPrev.disabled = !study || !(
+    study.prices[0]?.session < week || study.check_days?.[0]?.day < week ||
+    study.events.some((event) => easternDate(event.detected_at) < week) ||
+    (study.weekend_events ?? []).some((event) => easternDate(event.detected_at) < week)
+  );
+  elements.weekNext.disabled = week >= current;
+  elements.currentWeek.hidden = !state.range && (!weekly || week === current);
+  elements.rangeStart.value = view?.range.first ?? "";
+  elements.rangeEnd.value = view?.range.last ?? "";
   elements.rangeReset.hidden = !state.range;
+  elements.rangeAll.hidden = !study?.prices.length;
   elements.pinRange.hidden = !state.overview.thetadesk.enabled || !view?.prices.length;
   elements.pinRange.disabled = state.pinSaveBusy;
   elements.studyDetails.hidden = !view;
@@ -854,6 +1241,8 @@ function renderDetail(report) {
     renderWeeklyNews();
   }
   renderChart(view);
+  renderDailyMoves(view);
+  renderMoveComparison(view);
   renderStudyDetails();
   showSessionNews(state.session);
 }
@@ -864,6 +1253,7 @@ function rangeStatus(message) {
 }
 
 function openStudy(symbol, moveFocus = true) {
+  if (symbol === state.detailSymbol) return;
   state.detailRequestId += 1;
   state.detailSymbol = symbol;
   if (state.pinStudy?.study.symbol !== symbol) state.pinStudy = null;
@@ -875,6 +1265,24 @@ function openStudy(symbol, moveFocus = true) {
   if (moveFocus) elements.detailTitle.focus();
 }
 
+function setChartRange(range) {
+  state.detailRequestId += 1;
+  state.range = range;
+  if (range) {
+    const week = weekStart(range.last);
+    state.weeklyNews.week = week >= currentNewsWeek() ? "" : week;
+  }
+  state.session = "";
+  state.coverageDay = "";
+  rangeStatus("");
+  renderDetail(state.overview.report);
+}
+
+function closeRangeTools() {
+  elements.rangeTools.open = false;
+  elements.rangeTools.querySelector("summary").focus();
+}
+
 function applyRange(event) {
   event.preventDefault();
   const first = elements.rangeStart.value;
@@ -883,10 +1291,8 @@ function applyRange(event) {
     rangeStatus("Choose a start date on or before the end date.");
     return;
   }
-  state.detailRequestId += 1;
-  state.range = { first, last };
-  rangeStatus("");
-  renderDetail(state.overview.report);
+  setChartRange({ first, last });
+  closeRangeTools();
 }
 
 function renderPins() {
@@ -932,10 +1338,8 @@ async function openPin(pin) {
     if (requestId !== state.detailRequestId) return;
     state.pinStudy = { ...data, range };
     state.detailSymbol = data.study.symbol;
-    state.range = range;
-    state.session = "";
-    state.coverageDay = "";
-    renderDetail(state.overview.report);
+    setChartRange(range);
+    elements.rangeTools.open = false;
     rangeStatus(`Opened shared pin · ${range.first} to ${range.last}`);
     elements.detailTitle.focus();
   } catch (error) {
@@ -948,8 +1352,7 @@ async function openPin(pin) {
 async function savePin() {
   const view = state.detailView;
   if (state.pinSaveBusy || !view?.prices.length) return;
-  const first = state.range?.first ?? view.prices[0].session;
-  const last = state.range?.last ?? view.prices.at(-1).session;
+  const { first, last } = view.range;
   state.pinSaveBusy = true;
   elements.pinRange.disabled = true;
   try {
@@ -968,6 +1371,9 @@ async function savePin() {
 
 function render() {
   const overview = state.overview;
+  const today = easternDate(new Date().toISOString());
+  elements.today.dateTime = today;
+  elements.today.textContent = `${WEEKDAY_DATE.format(dateAtUtcMidnight(today))} · ET`;
   elements.banner.textContent = overview.display.banner;
   elements.banner.hidden = !overview.display.banner;
   renderWatchlist(overview);
@@ -1002,7 +1408,7 @@ async function refresh() {
     state.overview = overview;
     render();
     scheduleHoundDogRetry();
-    elements.updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    elements.updated.textContent = `Bridge refreshed ${EASTERN_TIME.format(new Date())} ET`;
     await refreshPins();
   } catch (error) {
     if (requestId === state.refreshId) showNotice(error.message);
@@ -1031,6 +1437,10 @@ elements.refresh.addEventListener("click", () => {
   refresh();
 });
 elements.shutdown.addEventListener("click", shutDown);
+document.querySelector("#open-sources").addEventListener("click", (event) => {
+  event.currentTarget.closest("details").open = false;
+  document.querySelector("#source-connections").open = true;
+});
 elements.addOther.addEventListener("click", addOtherTicker);
 elements.otherTicker.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -1039,13 +1449,28 @@ elements.otherTicker.addEventListener("keydown", (event) => {
   }
 });
 elements.watchForm.addEventListener("submit", submitWatch);
-elements.detailSymbol.addEventListener("change", () => openStudy(elements.detailSymbol.value, false));
 elements.rangeForm.addEventListener("submit", applyRange);
-elements.rangeReset.addEventListener("click", () => openStudy(state.detailSymbol, false));
+elements.rangeReset.addEventListener("click", () => {
+  openWeek(activeWeek());
+  closeRangeTools();
+});
+elements.rangeAll.addEventListener("click", () => {
+  const prices = state.detailStudy?.prices;
+  if (!prices?.length) return;
+  setChartRange({ first: prices[0].session, last: prices.at(-1).session });
+  closeRangeTools();
+});
 elements.pinRange.addEventListener("click", savePin);
 elements.studyDetails.addEventListener("toggle", renderStudyDetails);
-elements.weekPrev.addEventListener("click", () => changeNewsWeek(-7));
-elements.weekNext.addEventListener("click", () => changeNewsWeek(7));
+elements.weekPrev.addEventListener("click", () => changeWeek(-7));
+elements.weekNext.addEventListener("click", () => changeWeek(7));
+elements.currentWeek.addEventListener("click", () => openWeek(currentNewsWeek()));
+for (const button of elements.rangePresets) {
+  button.addEventListener("click", () => {
+    state.rangePreset = button.dataset.preset;
+    setChartRange(null);
+  });
+}
 elements.weekdaysNews.addEventListener("click", () => {
   state.weeklyNews.includeWeekend = false;
   renderWeeklyNews();
@@ -1053,6 +1478,18 @@ elements.weekdaysNews.addEventListener("click", () => {
 elements.fullWeekNews.addEventListener("click", () => {
   state.weeklyNews.includeWeekend = true;
   renderWeeklyNews();
+});
+for (const menu of document.querySelectorAll(".toolbar-menu")) {
+  menu.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !menu.open) return;
+    menu.open = false;
+    menu.querySelector("summary").focus();
+  });
+}
+document.addEventListener("click", (event) => {
+  for (const menu of document.querySelectorAll(".toolbar-menu[open]")) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
 });
 
 refresh();

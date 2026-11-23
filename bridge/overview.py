@@ -10,7 +10,9 @@ from typing import Any
 from config import BridgeConfig
 from exports import MarketData, NewsData, ReadReport, read_market, read_news
 from market_calendar import NyseCalendar
+from research import research_bundle, source_quality
 from study import DAILY, DailyStudy, GroupStudy, StudySymbol, SymbolStudy
+from timeline import Timeline, ticker_timeline
 
 
 @dataclass(frozen=True)
@@ -91,7 +93,7 @@ class Overview:
                 first_check=min(checks, default=None),
                 last_check=max(checks, default=None),
                 topics_watched=tuple(sorted({topic for check in news.checks if check.topics for topic in check.topics})),
-                revisions=news.revisions,
+                revisions=len(news.revisions),
                 read=news.report,
             ),
             MarketStatus(
@@ -102,18 +104,42 @@ class Overview:
             ),
         )
 
-    def report(self) -> Report:
-        study = self.daily_study()
+    def report(self, *, latest_closed_session: date | None = None) -> Report:
+        study = self.daily_study(latest_closed_session=latest_closed_session)
         symbols = {symbol.symbol: study.run(symbol) for symbol in self.config.symbols}
         groups = tuple(DailyStudy.run_group(group, symbols) for group in self.config.groups)
         return Report(tuple(symbols.values()), groups)
 
-    def daily_study(self) -> DailyStudy:
-        return DailyStudy(NyseCalendar(), self.news.events, self.news.checks, self.market.bars, self.market.coverage)
+    def daily_study(self, *, latest_closed_session: date | None = None) -> DailyStudy:
+        return DailyStudy(
+            NyseCalendar(), self.news.events, self.news.checks, self.market.bars, self.market.coverage,
+            latest_closed_session=latest_closed_session,
+        )
 
     def ticker(self, symbol: str) -> SymbolStudy:
+        return self.daily_study().run(self._study_symbol(symbol))
+
+    def timeline(self, symbol: str, start_at: datetime, end_at: datetime) -> Timeline:
+        return ticker_timeline(self._study_symbol(symbol), self.news, self.market, start_at, end_at)
+
+    def research(
+        self, symbols: tuple[str, ...], start_at: datetime, end_at: datetime, sessions: tuple[date, date] | None,
+    ) -> dict[str, Any]:
+        tickers = tuple(self._study_symbol(symbol) for symbol in symbols) if symbols else self.config.symbols
+        return {
+            **research_bundle(tickers, self.news, self.market, start_at, end_at, sessions),
+            "quality": {
+                "hounddog": {
+                    **source_quality(self.config.hounddog_exports, self.news.report),
+                    "checks_with_unknown_topics": sum(check.topics is None for check in self.news.checks),
+                },
+                "thetadesk": source_quality(self.config.thetadesk_exports, self.market.report),
+            },
+        }
+
+    def _study_symbol(self, symbol: str) -> StudySymbol:
         configured = next((entry for entry in self.config.symbols if entry.symbol == symbol), None)
-        return self.daily_study().run(configured or StudySymbol(symbol, (symbol,)))
+        return configured or StudySymbol(symbol, (symbol,))
 
     def watchlist(self, report: Report, first: date, last: date) -> tuple[WatchlistEntry, ...]:
         latest = {}

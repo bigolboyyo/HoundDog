@@ -15,6 +15,8 @@ creds.txt
 exports/
 bridge/demo/
 *.toml.tmp
+notification-status.json
+notification-status.json.*.tmp
 
 # Builds and executables (rebuild with each app's build_exe.ps1)
 build/

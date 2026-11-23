@@ -40,6 +40,12 @@ const elements = {
   jobLogClear: document.querySelector("#job-log-clear"),
   autoCheckAction: document.querySelector("#auto-check-action"),
   notifyNewMatches: document.querySelector("#notify-new-matches"),
+  browserNotificationStatus: document.querySelector("#browser-notification-status"),
+  windowsNotificationFields: document.querySelector("#windows-notification-fields"),
+  windowsNotificationStatus: document.querySelector("#windows-notification-status"),
+  notificationLastResult: document.querySelector("#notification-last-result"),
+  notificationTest: document.querySelector("#notification-test"),
+  notificationRefresh: document.querySelector("#notification-refresh"),
   importFile: document.querySelector("#import-file"),
   importConfig: document.querySelector("#import-config"),
   importHistory: document.querySelector("#import-history"),
@@ -794,18 +800,37 @@ elements.showImages.addEventListener("change", () => {
 const notificationsStorageKey = "keyword-watcher-notifications";
 const notifiedLinks = new Set();
 const notificationCount = new Intl.NumberFormat();
+let nativeNotificationEnabled = false;
+let nativeNotificationSupported = true;
+let notificationToolsBusy = false;
 
 function notificationsAllowed() {
   return "Notification" in window && window.Notification.permission === "granted";
 }
 
+function renderBrowserNotificationStatus() {
+  const usingWindows = nativeNotificationEnabled && nativeNotificationSupported;
+  elements.notifyNewMatches.disabled = usingWindows;
+  let message = "Browser alerts run only while this tab is running automatic checks.";
+  if (usingWindows) {
+    message = "Windows notifications are handling saved checks.";
+  } else if (!("Notification" in window)) {
+    message = "This browser does not support desktop notifications.";
+  } else if (window.Notification.permission === "denied") {
+    message = "The browser blocks notifications for this site. Change its site permissions to use them here.";
+  }
+  elements.browserNotificationStatus.textContent = message;
+}
+
 function disableNotifications() {
   elements.notifyNewMatches.checked = false;
   window.localStorage.setItem(notificationsStorageKey, "false");
+  renderBrowserNotificationStatus();
 }
 
 elements.notifyNewMatches.checked =
   window.localStorage.getItem(notificationsStorageKey) === "true" && notificationsAllowed();
+renderBrowserNotificationStatus();
 elements.notifyNewMatches.addEventListener("change", async () => {
   if (elements.notifyNewMatches.checked) {
     try {
@@ -822,7 +847,54 @@ elements.notifyNewMatches.addEventListener("change", async () => {
     }
   }
   window.localStorage.setItem(notificationsStorageKey, String(elements.notifyNewMatches.checked));
+  renderBrowserNotificationStatus();
 });
+
+function renderNotificationSettings(settings) {
+  nativeNotificationEnabled = Boolean(settings.notification_enabled);
+  renderBrowserNotificationStatus();
+}
+
+function renderLastNotification(result) {
+  const origin = {
+    test: "Test", scheduled: "Background check", auto: "Dashboard auto-check",
+    dashboard: "Manual dashboard check", cli: "Command-line check",
+  };
+  elements.notificationLastResult.textContent = result
+    ? `${origin[result.trigger] ?? "Last result"} · ${formatDate(result.at)} · ${result.message}`
+    : "No Windows notification activity yet.";
+}
+
+async function checkWindowsNotifications(test = false) {
+  if (notificationToolsBusy) return;
+  notificationToolsBusy = true;
+  elements.notificationTest.disabled = true;
+  elements.notificationRefresh.disabled = true;
+  elements.windowsNotificationStatus.textContent = test ? "Sending a test to Windows…" : "Checking Windows…";
+  try {
+    if (test) {
+      const result = await api("/api/notifications/test", { method: "POST", body: "{}" });
+      elements.windowsNotificationStatus.textContent = result.message;
+      renderLastNotification(result);
+    } else {
+      const result = await api("/api/notifications");
+      nativeNotificationSupported = result.supported;
+      elements.windowsNotificationFields.disabled = !nativeNotificationSupported;
+      elements.windowsNotificationStatus.textContent = result.message;
+      renderLastNotification(result.last);
+      renderBrowserNotificationStatus();
+    }
+  } catch (error) {
+    elements.windowsNotificationStatus.textContent = error.message;
+  } finally {
+    notificationToolsBusy = false;
+    elements.notificationTest.disabled = false;
+    elements.notificationRefresh.disabled = false;
+  }
+}
+
+elements.notificationTest.addEventListener("click", () => checkWindowsNotifications(true));
+elements.notificationRefresh.addEventListener("click", () => checkWindowsNotifications());
 
 function markAnnounced(matches) {
   matches.forEach((match) => notifiedLinks.add(match.item.link));
@@ -959,6 +1031,7 @@ class SettingsForm {
       const settings = await api("/api/settings", { method: "PUT", body: JSON.stringify(changes) });
       this.dirty = false;
       settingsForms.forEach((form) => form.fill(settings));
+      renderNotificationSettings(settings);
       showNotice(savedMessage);
     } catch (error) {
       showNotice(error.message);
@@ -979,6 +1052,14 @@ const settingsForms = [
   new SettingsForm(document.querySelector("#event-export-form"), {
     event_export: document.querySelector("#setting-event-export"),
   }, "Event export setting saved."),
+  new SettingsForm(document.querySelector("#notification-form"), {
+    notification_enabled: document.querySelector("#notification-enabled"),
+    notification_min_articles: document.querySelector("#notification-min-articles"),
+    notification_manual_checks: document.querySelector("#notification-manual-checks"),
+    notification_include_backfill: document.querySelector("#notification-include-backfill"),
+    notification_banner: document.querySelector("#notification-banner"),
+    notification_sound: document.querySelector("#notification-sound"),
+  }, "Notification settings saved."),
 ];
 
 // The server's limit: export never produces a larger backup.
@@ -1052,6 +1133,7 @@ async function refresh() {
     elements.inboxMarkRead.disabled = unread.length === 0;
     if (data.settings) {
       settingsForms.forEach((form) => form.fill(data.settings, data.setting_defaults));
+      renderNotificationSettings(data.settings);
       const defaults = data.setting_defaults;
       document.querySelector("#feed-settings-defaults").textContent =
         `Defaults: ${defaults.fetch_timeout_seconds} seconds, ${defaults.max_feed_megabytes} MB, ` +
@@ -1345,10 +1427,16 @@ async function runCheck(dryRun, button, { automatic = false } = {}) {
       : "";
     const exportText = data.export_error ? ` Event export not written yet: ${data.export_error}.` : "";
     let notificationText = "";
-    if (automatic) {
+    if (automatic && !data.windows_notifications) {
       notificationText = notifyNewMatches(data.matches, failed.length) ?? "";
     } else {
       markAnnounced(data.matches);
+    }
+    if (data.notification) {
+      renderLastNotification(data.notification);
+      if (["blocked", "failed"].includes(data.notification.state)) {
+        notificationText = ` ${data.notification.message}`;
+      }
     }
     showNotice(`${automatic ? "Auto-check: " : ""}${result}${pruned}${failed.length ? ` Failed to load: ${failed.join(", ")}.` : ""}${skippedText}${exportText}${notificationText}`);
     const checkedAt = new Date().toLocaleTimeString(undefined, { timeStyle: "short" });
@@ -1696,16 +1784,20 @@ const toolbar = new Toolbar({
   },
   health: loadHealth,
   log: loadActivity,
-  settings: () => checkingMode.loadJob(),
+  settings: () => {
+    checkingMode.loadJob();
+    if (!document.querySelector("#settings-notifications").hidden) checkWindowsNotifications();
+  },
 });
 
 // Buttons with data-panel="name" show one panel each and hide the rest; the
 // choice is remembered. Unknown or missing names fall back to the first button.
 class TabGroup {
-  constructor(buttons, storageKey, panelSelector) {
+  constructor(buttons, storageKey, panelSelector, onShow = () => {}) {
     this.buttons = buttons;
     this.storageKey = storageKey;
     this.panelSelector = panelSelector;
+    this.onShow = onShow;
     this.buttons.forEach((button) => {
       button.addEventListener("click", () => {
         window.localStorage.setItem(this.storageKey, this.show(button.dataset.panel));
@@ -1721,6 +1813,7 @@ class TabGroup {
       button.classList.toggle("is-active", active);
       document.querySelector(this.panelSelector(button.dataset.panel)).hidden = !active;
     });
+    this.onShow(activeButton.dataset.panel);
     return activeButton.dataset.panel;
   }
 }
@@ -1734,6 +1827,9 @@ new TabGroup(
   Array.from(document.querySelectorAll(".settings-nav-button")),
   "keyword-watcher-settings-section",
   (name) => `#settings-${name}`,
+  (name) => {
+    if (name === "notifications" && toolbar.openTool === "settings") checkWindowsNotifications();
+  },
 );
 
 elements.checkButton.addEventListener("click", (event) => {

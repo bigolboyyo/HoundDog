@@ -9,6 +9,8 @@ from http.client import HTTPConnection, HTTPException
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
 
+from exports import bar, nonnegative_integer, object_array, text_field
+
 
 class ThetaDeskError(RuntimeError):
     def __init__(self, detail: str, status: int, retry_after: str | None = None) -> None:
@@ -26,31 +28,65 @@ class ThetaDeskClient:
     def fetch_bars(self, symbol: str, first: date, last: date, refresh: bool) -> dict[str, Any]:
         payload = {"start_date": first.isoformat(), "end_date": last.isoformat(), "refresh": refresh}
         result = self._request("POST", f"/api/v1/stocks/{quote(symbol, safe='')}/bars/fetch", payload, timeout=90)
-        if not isinstance(result.get("data"), list):
-            raise ThetaDeskError("ThetaDesk returned an unexpected bar response.", 502)
+        rows = self._bars(result, symbol, first, last)
+        try:
+            added = nonnegative_integer(result["added"])
+            covered = result["covered_through"]
+            covered = date.fromisoformat(covered) if covered is not None else None
+            if covered is not None and not first <= covered <= last:
+                raise ValueError("coverage outside the requested window")
+        except (KeyError, ValueError, TypeError, OverflowError) as error:
+            raise ThetaDeskError("ThetaDesk returned an invalid bar fetch summary.", 502) from error
         return {
-            "bars": len(result["data"]), "added": result.get("added"),
-            "covered_through": result.get("covered_through"),
-            "latest_bar": result["data"][-1]["session_date"] if result["data"] else None,
+            "bars": len(rows), "added": added,
+            "covered_through": covered.isoformat() if covered is not None else None,
+            "latest_bar": rows[-1]["session_date"] if rows else None,
         }
 
     def stored_bars(self, symbol: str, first: date, last: date) -> list[dict[str, Any]]:
         query = urlencode({"start_date": first.isoformat(), "end_date": last.isoformat()})
         result = self._request("GET", f"/api/v1/stocks/{quote(symbol, safe='')}/bars?{query}")
-        if not isinstance(result.get("data"), list):
-            raise ThetaDeskError("ThetaDesk returned an unexpected bar response.", 502)
-        return result["data"]
+        return self._bars(result, symbol, first, last)
+
+    @staticmethod
+    def _bars(result: dict[str, Any], symbol: str, first: date, last: date) -> list[dict[str, Any]]:
+        try:
+            rows = {}
+            for row in object_array(result["data"]):
+                parsed = bar(row)
+                if parsed.symbol != symbol or parsed.interval != "1d" or not first <= parsed.session_date <= last:
+                    raise ValueError("unexpected symbol, interval or day")
+                if parsed.session_date in rows:
+                    raise ValueError("duplicate daily bar")
+                rows[parsed.session_date] = {**row, "session_date": parsed.session_date.isoformat(), "close": parsed.close}
+            return [rows[day] for day in sorted(rows)]
+        except (KeyError, ValueError, TypeError, OverflowError) as error:
+            raise ThetaDeskError("ThetaDesk returned an invalid daily bar response.", 502) from error
 
     def pins(self) -> list[dict[str, Any]]:
         result = self._request("GET", "/api/v1/pins")
-        if not isinstance(result.get("pins"), list):
-            raise ThetaDeskError("ThetaDesk returned an unexpected pin response.", 502)
-        return result["pins"]
+        try:
+            pins = object_array(result["pins"])
+        except (KeyError, ValueError) as error:
+            raise ThetaDeskError("ThetaDesk returned an invalid pin list.", 502) from error
+        return [self._pin(pin) for pin in pins]
 
     def add_pin(self, symbol: str, first: date, last: date) -> dict[str, Any]:
-        return self._request("POST", "/api/v1/pins", {
+        result = self._request("POST", "/api/v1/pins", {
             "symbol": symbol, "start_date": first.isoformat(), "end_date": last.isoformat(),
         })
+        return self._pin(result)
+
+    @staticmethod
+    def _pin(result: dict[str, Any]) -> dict[str, Any]:
+        try:
+            symbol = text_field(result["symbol"], required=True).strip().upper()
+            first, last = (date.fromisoformat(result[key]) for key in ("start_date", "end_date"))
+            if first > last:
+                raise ValueError("pin dates out of order")
+        except (KeyError, ValueError, TypeError) as error:
+            raise ThetaDeskError("ThetaDesk returned an invalid pin.", 502) from error
+        return {"symbol": symbol, "start_date": first.isoformat(), "end_date": last.isoformat()}
 
     def _request(
         self, method: str, path: str, payload: dict[str, Any] | None = None, *, timeout: int = 5,
@@ -68,7 +104,7 @@ class ThetaDeskClient:
             raise ThetaDeskError("ThetaDesk is unavailable. Start it and try again.", 503) from error
         try:
             result = json.loads(raw)
-        except (ValueError, UnicodeError):
+        except (ValueError, RecursionError):
             result = None
         if response.status >= 400:
             detail = result.get("detail") if isinstance(result, dict) else None

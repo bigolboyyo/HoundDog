@@ -25,16 +25,16 @@ python bridge\server.py
 
 The dashboard opens at [127.0.0.1:8090](http://127.0.0.1:8090). Use `--port`
 to change its port or `--no-browser` to start it without opening a tab.
-Stop Bridge with **Shut down** or Ctrl+C.
+Stop Bridge with **Service → Shut down Bridge** or Ctrl+C.
 
-- the selected ticker's closing-price chart and weekly news at the top,
-  with the last price shown and the latest recorded check in HoundDog's
-  exports;
-- a watchlist with the latest exported close, news and quiet session
-  counts, and actions to load prices or open a ticker's study;
-- the full study table for each ticker and group below the watchlist;
-- coverage, session counts, and article placement under **Study details**,
-  and export summaries under **Sources and connections**.
+- a compact watchlist across the top with the latest exported close, price
+  status, and price-loading actions;
+- the weekly chart and news for the selected ticker, with the date range,
+  price date, and latest recorded HoundDog check in the header;
+- the full study table for each ticker and group below the weekly workspace;
+- per-ticker article status bars under **Data notes**;
+- coverage, session counts, and article placement under **Study details**;
+- export summaries and setup notes under **Sources and connections**.
 
 **Producer connections.** The ThetaHound launcher passes custom producer
 ports when you start the apps together. To choose the ports for one
@@ -61,17 +61,40 @@ selected for retry. If only prices failed, use the watchlist's price action.
 
 **Price loading.** A first load requests about a year through the latest
 closed NYSE session. An update starts after the last saved close, within
-that rolling year. ThetaDesk fills gaps in its cached lookup dates. Use
-**Retry missing bars** to recheck the range with the provider after a
-successful lookup left a bar missing. ThetaDesk can save today's bar
+that rolling year. ThetaDesk fills gaps in its cached lookup dates. The
+first saved daily close starts Bridge's gap checks and serves as the baseline
+for returns. An earlier close saved later extends that history. Use
+**Retry missing bars** to recheck the range with the provider when a
+successful lookup left a gap after the first saved close. ThetaDesk can save today's bar
 starting at 6 p.m. ET. If the daily bar is still pending, the normal update
 will retry only the recent dates. Bridge refreshes its study from
 the exports after a price request, including when the request reports an
 error after saving partial progress.
 
-**News on the chart.** Select a news marker to see the price move, volume,
-and articles for that day. Select it again to close the details. The
-optional **Study details** panel shows HoundDog's activity by New York
+**Daily moves.** Below the closing-price chart, return bars show the
+close-to-close change and volume bars show volume as a multiple of the
+ticker's median. Both strips share the chart's trading dates. Pink dots
+mark news sessions. A gap in the strips means the corresponding value
+is unavailable.
+
+**Weekly view.** Bridge opens to the current New York week. The arrows
+move the chart and news together, and ticker selection keeps the week in
+view. The chart shows Monday through Friday as daily slots. The prior
+saved close is a separate reference point, including when the first close
+of the week is pending. Load a newly closed session from the watchlist
+to update the chart. The **1M**, **3M**, **6M**, and **1Y** buttons show
+rolling chart ranges through today in New York, with current-week news
+beside them. Switching tickers keeps the selected preset. Open **Dates & pins**
+for an explicit range or to show all the ticker's saved prices. A new page
+load starts on **Week** again. Use a pin to reopen a saved date range.
+
+**News vs. quiet.** The two dot rows use the same scale and the chart's
+date range. Each dot shows one session's absolute return. Each row lists
+its session count and median move. The dashed line marks that median.
+
+**News on the chart.** Select a marker on the price chart to see the
+price move, volume, and articles for that day. Select it again to close the
+details. The optional **Study details** panel shows HoundDog's activity by New York
 calendar date, including weekends and today. The bar starts with the first
 recorded check for the ticker's topics. Each day with feed attempts shows
 the successful and failed proportions. Successful attempts include downloads
@@ -81,20 +104,31 @@ filter the chart and ticker detail. The main study summary uses the full
 available sample.
 
 **Weekly news.** The list sits beside the chart on wide screens. **Weekdays**
-shows live articles assigned to trading sessions and counts how many have
-yet to be matched to a price move. **Full week** also displays a separate
+shows live articles with their assigned sessions and price status. **Full week**
+also displays a separate
 **Weekend news** list for Friday at or after the NYSE close through Sunday
 in New York time. If Friday was closed, the weekend starts at 4 p.m. ET.
 Weekend articles have a detection time and stay outside the daily price
 study. Monday through Thursday after-close articles still go to the next
-trading session. Use the arrows to browse earlier weeks by detection date.
-The chart's date range controls operate independently of this view.
+trading session. The weekly list is filtered by detection date and groups
+weekday articles under their assigned session. In a custom chart range the
+news starts at the week of its end date. Select **Week** to return to weekly
+navigation.
 
-**Pinned ranges.** Use **Pin this range** beside the date controls to save
+**Pinned ranges.** Use **Pin this range** under **Dates & pins** to save
 the active ticker and dates in ThetaDesk. Opening a shared pin restores its
 range, reads stored closes through ThetaDesk, and shows matching news from
 Bridge's exports. A pin outside the Bridge watchlist uses the topic named
 after its ticker. Refresh either dashboard to see pins added in the other.
+
+**Data notes.** Each ticker's bar shows all saved live detections on a shared
+count scale. Articles with a computable move are **In study**. An assigned
+session beyond the latest NYSE close is **Awaiting close**. After the close,
+Bridge distinguishes dates before the first saved close, the baseline close
+itself, dates without a recorded lookup, and gaps within saved price history.
+Tickers without a saved close show **No saved prices**. **Weekend news** gets its own
+segment. The **After close** badge counts weekday detections assigned to
+the next trading session. Those articles are already counted in the bar.
 
 ### HTTP API
 
@@ -105,7 +139,80 @@ after its ticker. Refresh either dashboard to see pins added in the other.
 | `POST /api/prices/{symbol}/fetch` | Requests bars for a watched ticker through ThetaDesk. Send `{}` for normal caching, `after` to update after a saved date, or `{"refresh": true}` to recheck with the provider. |
 | `GET /api/pins`, `POST /api/pins` | Lists shared pins or saves a range by `symbol`, `start_date`, and `end_date` in ThetaDesk. |
 | `GET /api/tickers/{symbol}` | Returns stored prices for the requested `start_date` and `end_date` alongside Bridge's export-based study for that ticker. |
+| `GET /api/timeline/{symbol}` | Returns timestamped observations from the saved exports for the requested `start_at` and `end_at`. |
+| `GET /api/v1/research` | Returns a versioned multi-ticker feed, archive health, and optional daily reference bars for scripts and models. |
 | `POST /api/shutdown` | Requests shutdown on a server started by `server.py`. |
+
+### Research feed
+
+Use `GET /api/v1/research` as the local data interface for scripts, AI tools,
+and modeling. It reads saved exports and works when the source dashboards are
+stopped.
+
+```powershell
+$uri = 'http://127.0.0.1:8090/api/v1/research?symbol=AAPL&symbol=NVDA&start_at=2026-11-22T00:00:00Z&end_at=2026-11-24T00:00:00Z'
+$research = Invoke-RestMethod -Uri $uri
+$research.entries | Select-Object observed_at, producer, kind, symbols, id
+```
+
+- `start_at` is inclusive and `end_at` is exclusive. Pass explicit offsets
+  and use `Z` for UTC. Repeat `symbol` to choose tickers, or omit it to use the
+  configured watchlist.
+- `schema` is `thetahound.research/1`. `entries` uses the observation kinds
+  documented below, ordered by UTC `observed_at`, then `kind` and `id`.
+  Shared checks and articles appear once, with all associated `symbols`.
+  Article `data.matches` stores matching topics and first detection time per
+  ticker. Feed outcomes include a stable `feed_id` when the source URL is
+  known. Raw feed URLs and feed error text are omitted.
+- `series` reports each ticker's topic mapping and counts of eligible archive
+  records with unknown observation times. `quality` reports source folder
+  presence, files, JSON object counts, duplicates, and skipped records across
+  each archive. A source outage, malformed row, or unknown timestamp should
+  be considered when judging sample coverage.
+- Supply both `session_start` and `session_end` as inclusive New York
+  session dates to get `reference_bars` for outcome analysis. This section
+  includes legacy bars with `recorded_at: null` and bars saved after the
+  observation cutoff. Use the timestamped `entries` for historical features
+  and the session-dated reference prices for later outcomes.
+
+For larger archives, request consecutive time windows. When polling, reread
+overlapping windows and deduplicate by `id` to account for delayed export
+delivery. The service binds locally. The demo configuration returns
+synthetic news.
+
+### Research timeline
+
+Query a ticker using ISO 8601 timestamps with explicit offsets. The window
+includes `start_at` and ends just before `end_at`. Use the end time as the
+cutoff for a historical snapshot. A ticker uses its topics from
+`bridge.toml`, or the topic named after the ticker by default.
+
+```powershell
+$uri = 'http://127.0.0.1:8090/api/timeline/AAPL?start_at=2026-11-22T00:00:00Z&end_at=2026-11-24T00:00:00Z'
+(Invoke-RestMethod -Uri $uri).entries | Select-Object observed_at, kind, id
+```
+
+The JSON response has schema `thetahound.timeline/1` and UTC times. Each
+entry has a stable `id`, an `observed_at` timestamp, a `kind`, and `data`.
+Entries are ordered by observation time, then kind and ID when times match.
+
+| Kind | Observation time | Data |
+| --- | --- | --- |
+| `check` | Saved check completion | Check start and end, topic fingerprints, and feed outcomes including failures and skips. |
+| `detection` | When HoundDog saved the match | Article ID, source, headline, link, publisher's release time when known, and matched topics with backfill flags. `first_detected_at` is the earliest saved detection for the ticker's topics, including detections before the requested window. |
+| `revision` | When HoundDog saved the change | Headline and release-time changes for an article the ticker had already detected, with their previous values. |
+| `bar` | When ThetaDesk first saved the bar | Trading date, regular session open, and daily OHLCV. A bar loaded later appears at its save time. |
+| `lookup` | When ThetaDesk first saved the completed range | Trading dates covered by the provider lookup, including a successful lookup that returned zero bars. |
+
+For research, use `observed_at` to decide when a record could first enter a
+feature. `released_at` is the publisher's claim and `start_at` on a bar is the
+market open. The timeline describes what the producers saved. Export retries
+can make records visible to clients later with their original timestamps.
+Coverage with unknown topics cannot be attributed to a ticker. The response's
+`unknown_timestamps` counts records for the ticker across the whole archive
+whose exact observation time is unknown. Those records stay usable in the
+daily study and are omitted from chronological replay. Older ThetaDesk
+exports typically account for most of these counts.
 
 ## Demo
 
@@ -208,8 +315,8 @@ available in the JSON report from `python bridge\bridge.py report --json`.
   Sessions without a qualifying check are left out of the quiet sample.
 - **Average move** is the average size of the close-to-close move, up or down.
 - **Volume ratio** compares session volume with the ticker's median volume.
-- **Missing bars** are trading days inside ThetaDesk's recorded lookup dates
-  with no daily bar.
+- **Missing bars** are trading days after the first saved close, inside
+  ThetaDesk's recorded lookup dates, with no daily bar.
 
 ## Limits
 

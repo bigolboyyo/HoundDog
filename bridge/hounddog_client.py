@@ -7,6 +7,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from http.client import HTTPException
 from typing import Any
 
 TIMEOUT_SECONDS = 5
@@ -36,8 +37,19 @@ class HoundDogClient:
         self.base_url = base_url.rstrip("/")
 
     def topic_names(self) -> list[str]:
-        dashboard = self._request("GET", "/api/dashboard")
-        return [str(topic["name"]) for topic in dashboard.get("topics", [])]
+        try:
+            response = self._request("GET", "/api/topics")
+        except HoundDogRefused as error:
+            if error.status != 404:
+                raise
+            response = self._request("GET", "/api/dashboard")  # Older HoundDog packages.
+        topics = response.get("topics")
+        if not isinstance(topics, list) or not all(
+            isinstance(topic, dict) and isinstance(topic.get("name"), str) and topic["name"].strip()
+            for topic in topics
+        ):
+            raise HoundDogUnavailable("HoundDog returned an invalid topic list.")
+        return [topic["name"] for topic in topics]
 
     def add_topic(self, name: str, keywords: list[str]) -> TopicResult:
         try:
@@ -57,14 +69,22 @@ class HoundDogClient:
         )
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-                return json.loads(response.read() or b"{}")
+                payload = json.loads(response.read() or b"{}")
+                if not isinstance(payload, dict):
+                    raise HoundDogUnavailable("HoundDog returned an invalid JSON response.")
+                return payload
         except urllib.error.HTTPError as error:
             try:
-                message = json.loads(error.read()).get("error", "")
-            except (json.JSONDecodeError, AttributeError):
+                payload = json.loads(error.read())
+                message = payload.get("error") if isinstance(payload, dict) else None
+            except (ValueError, RecursionError, HTTPException, OSError):
                 message = ""
-            raise HoundDogRefused(message or f"HoundDog answered {error.code}", error.code) from error
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+            if not isinstance(message, str) or not message:
+                message = f"HoundDog answered {error.code}"
+            raise HoundDogRefused(message, error.code) from error
+        except (ValueError, RecursionError) as error:
+            raise HoundDogUnavailable("HoundDog returned an invalid JSON response.") from error
+        except (OSError, HTTPException) as error:
             raise HoundDogUnavailable(
                 f"HoundDog is not reachable at {self.base_url}. Start HoundDog, then try again."
             ) from error

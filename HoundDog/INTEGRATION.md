@@ -2,6 +2,8 @@
 
 HoundDog exports news and check coverage. ThetaDesk exports daily bars and
 the dates it looked up. Bridge reads both exports for the daily study.
+For downstream consumers, Bridge's [research feed](../bridge/README.md#research-feed)
+joins both sources using the observation timestamps in these records.
 
 ## Ownership
 
@@ -185,8 +187,10 @@ excludes the article for that ticker. Friday at or after the close
 through Sunday goes into the weekend list. Other detections go to the
 current session before the close or the next trading session after it.
 Quiet sessions need a calculable return and a qualifying check outside
-the weekend window. Revision records are counted in export status.
-Placement uses the original detection event.
+the weekend window. Placement uses the original detection event. The
+research feed also exposes later revisions at their own observation times.
+For a cutoff replay, use each entry's `observed_at`. A publisher's release
+time and a bar's session date provide context for those observations.
 
 The CLI and dashboard use the same report. Rules and examples are in the
 [Bridge guide](../bridge/README.md#what-the-report-means).

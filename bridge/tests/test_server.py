@@ -15,10 +15,10 @@ from fastapi.testclient import TestClient
 
 import bridge
 from config import BridgeConfig, ConfigError, read_raw, render_raw
-from fixtures import bar, bar_coverage, coverage, event, write_lines
+from fixtures import bar, bar_coverage, coverage, event, moment, write_lines
 from hounddog_client import HoundDogClient, HoundDogRefused, HoundDogUnavailable, TopicResult
 from server import ServerStop, create_app
-from thetadesk_client import ThetaDeskError
+from thetadesk_client import ThetaDeskClient, ThetaDeskError
 
 LOCAL = "http://127.0.0.1:8090"
 
@@ -133,8 +133,130 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(response.json()["report"], json.loads(stdout.getvalue()))
         [study] = response.json()["report"]["symbols"]
-        self.assertEqual(study["excluded_sessions"][0]["reason"], "missing_previous_bar")
+        self.assertEqual(study["excluded_sessions"][0]["reason"], "first_price_session")
         self.assertEqual(study["events"][0]["placement"], "before_close")
+
+    def test_timeline_uses_when_records_became_known_and_keeps_original_times(self):
+        root = self.config.parent.parent
+        check = coverage(3, "2026-11-17 14:55", ["AAPL"], status="unchanged")
+        check["finished_at"] = moment("2026-11-17 15:05")
+        first = event(2, "2026-11-17 14:50", "https://x/a", ["AAPL"], backfill=True)
+        detection = event(3, "2026-11-17 15:05", "https://x/a", ["AAPL", "NVDA"])
+        detection["released_at"] = "2026-11-17T09:00:00-05:00"
+        revision = {
+            "schema": "hounddog.revision/1", "event_id": "a", "run_id": "run4",
+            "observed_at": moment("2026-11-17 15:10"), "changed": ["title", "released_at"],
+            "title": "Updated", "previous_title": "Headline", "released_at": moment("2026-11-17 13:59"),
+            "previous_released_at": detection["released_at"],
+        }
+        no_finish = coverage(5, "2026-11-17 15:02", ["AAPL"])
+        del no_finish["finished_at"]
+        unrelated = coverage(6, "2026-11-17 15:08", ["NVDA"])
+        write_lines(root / "HoundDog" / "exports" / "hounddog-2026-11-17.jsonl", [
+            check, detection, revision, first, detection, no_finish, unrelated,
+            {**revision, "run_id": "before-match", "observed_at": moment("2026-11-17 14:40")},
+        ])
+        day = date(2026, 11, 12)
+        recorded = moment("2026-11-17 15:12")
+        write_lines(root / "market" / "theta-bars-2026-11-17.jsonl", [
+            {**bar("AAPL", day, 99.0), "recorded_at": recorded},
+            {**bar("NVDA", day, 50.0), "recorded_at": recorded},
+        ])
+        write_lines(root / "market" / "theta-coverage-2026-11-17.jsonl", [
+            {**bar_coverage("AAPL", day, day), "recorded_at": recorded},
+        ])
+
+        def replay(start, end):
+            response = self.client().get("/api/timeline/aapl", params={"start_at": start, "end_at": end})
+            self.assertEqual(response.status_code, 200)
+            return response.json()
+
+        start = "2026-11-17T10:00:00-05:00"
+        self.assertEqual(replay(start, "2026-11-17T15:05:00Z")["entries"], [])
+        early = replay(start, recorded)
+        self.assertEqual([row["kind"] for row in early["entries"]], ["check", "detection", "revision"])
+        full = replay(start, "2026-11-17T16:00:00Z")
+        self.assertEqual(full["schema"], "thetahound.timeline/1")
+        self.assertEqual(full["start_at"], moment("2026-11-17 15:00"))
+        self.assertEqual(full["topics"], ["AAPL"])
+        self.assertEqual(full["unknown_timestamps"], {"check": 1, "bar": 2, "lookup": 1})
+        check_row, detection_row, revision_row, bar_row, lookup_row = full["entries"]
+        self.assertEqual([row["kind"] for row in full["entries"]], ["check", "detection", "revision", "bar", "lookup"])
+        self.assertEqual(check_row["data"]["feeds"][0]["status"], "unchanged")
+        self.assertEqual(check_row["data"]["started_at"], moment("2026-11-17 14:55"))
+        self.assertEqual(detection_row["data"]["released_at"], moment("2026-11-17 14:00"))
+        self.assertEqual(detection_row["data"]["first_detected_at"], first["detected_at"])
+        self.assertEqual(detection_row["data"]["check_key"], check_row["data"]["check_key"])
+        self.assertEqual([match["name"] for match in detection_row["data"]["topics"]], ["AAPL"])
+        self.assertEqual(revision_row["data"]["title"], "Updated")
+        self.assertEqual(bar_row["data"]["session_date"], day.isoformat())
+        self.assertEqual(bar_row["observed_at"], recorded)
+        self.assertEqual(lookup_row["observed_at"], recorded)
+
+    def test_timeline_requires_an_ordered_interval_with_offsets(self):
+        for start, end in [
+            ("2026-11-17T15:00:00", "2026-11-17T16:00:00Z"),
+            ("2026-11-17T16:00:00Z", "2026-11-17T10:00:00-05:00"),
+        ]:
+            with self.subTest(start=start, end=end):
+                response = self.client().get("/api/timeline/AAPL", params={"start_at": start, "end_at": end})
+                self.assertEqual(response.status_code, 422)
+
+    def test_research_deduplicates_shared_records_and_exposes_archive_quality(self):
+        root = self.config.parent.parent
+        stamp = moment("2026-11-17 16:00")
+        check = coverage(5, "2026-11-17 16:00", ["AAPL", "NVDA"], status="failed")
+        check["feeds"][0].update({"url": "https://wire.example/rss?user_token=private", "detail": "private error"})
+        detection = event(5, "2026-11-17 16:00", "https://x/shared", ["AAPL", "NVDA"])
+        detection["feed_url"] = check["feeds"][0]["url"]
+        detection["topics"][0]["feed_url"] = detection["feed_url"]
+        malformed = {**detection, "backfill": "false", "event_id": "bad"}
+        write_lines(root / "HoundDog" / "exports" / "hounddog-2026-11-17.jsonl", [
+            check, detection, detection, malformed,
+        ])
+        last = date(2026, 11, 17)
+        timed = {**bar("AAPL", last, 100.0), "recorded_at": moment("2026-11-17 23:00")}
+        bad_time = {**timed, "recorded_at": stamp}
+        write_lines(root / "market" / "theta-bars-2026-11-17.jsonl", [
+            bad_time, {**timed, "volume": 1.5}, timed,
+        ])
+        with TestClient(create_app(
+            self.config, Mock(side_effect=AssertionError("called HoundDog")),
+            thetadesk=Mock(side_effect=AssertionError("called ThetaDesk")),
+        ), base_url=LOCAL) as client:
+            response = client.get("/api/v1/research", params=[
+                ("symbol", "aapl"), ("symbol", "NVDA"), ("symbol", "AAPL"),
+                ("start_at", stamp), ("end_at", "2026-11-17T21:00:00Z"),
+                ("session_start", "2026-11-16"), ("session_end", last.isoformat()),
+            ])
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn("private", response.text)
+        data = response.json()
+        self.assertEqual(data["schema"], "thetahound.research/1")
+        self.assertEqual([row["symbol"] for row in data["series"]], ["AAPL", "NVDA"])
+        check_row, article = data["entries"]
+        self.assertEqual([check_row["kind"], article["kind"]], ["check", "detection"])
+        self.assertEqual(check_row["symbols"], ["AAPL", "NVDA"])
+        self.assertEqual(article["data"]["feed_id"], check_row["data"]["feeds"][0]["feed_id"])
+        self.assertEqual(list(article["data"]["matches"]), ["AAPL", "NVDA"])
+        self.assertEqual(article["data"]["matches"]["AAPL"]["first_detected_at"], stamp)
+        self.assertEqual(data["quality"]["hounddog"]["duplicates"], 1)
+        self.assertEqual(data["quality"]["hounddog"]["skipped"], {"malformed hounddog.event/1": 1})
+        self.assertEqual(data["quality"]["thetadesk"]["skipped"], {"malformed theta.bar/1": 2})
+        self.assertEqual([(row["symbol"], row["recorded_at"]) for row in data["reference_bars"]["bars"]], [
+            ("AAPL", None), ("AAPL", timed["recorded_at"]), ("NVDA", None),
+        ])
+
+    def test_research_defaults_to_the_watchlist_and_requires_a_complete_reference_range(self):
+        client = self.client()
+        bounds = {"start_at": "2026-11-16T14:00:00Z", "end_at": "2026-11-16T16:00:00Z"}
+        data = client.get("/api/v1/research", params=bounds).json()
+        self.assertEqual([row["symbol"] for row in data["series"]], ["AAPL"])
+        self.assertIsNone(data["reference_bars"])
+        response = client.get("/api/v1/research", params={**bounds, "session_start": "2026-11-16"})
+        self.assertEqual(response.status_code, 422)
 
     def test_watching_a_group_creates_one_topic_per_ticker_and_records_the_group(self):
         response = self.watch({
@@ -375,6 +497,16 @@ class HoundDogClientTests(unittest.TestCase):
         with self.assertRaisesRegex(HoundDogRefused, "Add at least one include keyword"):
             self.client.add_topic("NVDA", [])
 
+    def test_an_older_hounddog_falls_back_and_a_malformed_list_gets_a_clear_error(self):
+        with patch.object(self.client, "_request", side_effect=[
+            HoundDogRefused("Unknown API endpoint", 404), {"topics": [{"name": "Breaking"}]},
+        ]) as request:
+            self.assertEqual(self.client.topic_names(), ["Breaking"])
+            self.assertEqual([call.args[1] for call in request.call_args_list], ["/api/topics", "/api/dashboard"])
+        with patch.object(self.client, "_request", return_value={"topics": [None]}):
+            with self.assertRaisesRegex(HoundDogUnavailable, "invalid topic list"):
+                self.client.topic_names()
+
     def test_a_stopped_hounddog_is_unavailable(self):
         port = self.server.server_address[1]
         self.server.shutdown()
@@ -382,6 +514,20 @@ class HoundDogClientTests(unittest.TestCase):
 
         with self.assertRaisesRegex(HoundDogUnavailable, "Start HoundDog"):
             HoundDogClient(f"http://127.0.0.1:{port}").topic_names()
+
+
+class ThetaDeskClientTests(unittest.TestCase):
+    def test_fetch_sorts_dates_and_malformed_upstream_prices_map_to_502(self):
+        first, last = date(2026, 11, 13), date(2026, 11, 16)
+        client = ThetaDeskClient("http://127.0.0.1:8000")
+        response = {"data": [bar("AAPL", last, 105.0), bar("AAPL", first, 100.0)],
+                    "added": 2, "covered_through": last.isoformat()}
+        with patch.object(client, "_request", return_value=response):
+            self.assertEqual(client.fetch_bars("AAPL", first, last, False)["latest_bar"], last.isoformat())
+        with patch.object(client, "_request", return_value={"data": [{}]}):
+            with self.assertRaises(ThetaDeskError) as failure:
+                client.stored_bars("AAPL", first, last)
+            self.assertEqual(failure.exception.status, 502)
 
 
 if __name__ == "__main__":

@@ -943,10 +943,10 @@ class EventExportTests(unittest.TestCase):
             self.addCleanup(resource.close)
         self.topics = (watcher.Topic("T", ["hound*"], []), watcher.Topic("U", ["one"], []))
 
-    def check(self, sources, save=True, settings=watcher.Settings()):
+    def check(self, sources, save=True, settings=watcher.Settings(), trigger="cli"):
         config = watcher.Config(tuple(sources), self.topics, settings)
         with redirect_stderr(io.StringIO()):
-            return watcher.perform_check(config, self.store, self.log, self.export, save, "cli")
+            return watcher.perform_check(config, self.store, self.log, self.export, save, trigger)
 
     def records(self):
         lines = [
@@ -992,6 +992,54 @@ class EventExportTests(unittest.TestCase):
         self.assertEqual(later_event["link"], "https://example.com/3")
         self.assertFalse(later_event["backfill"], "the feed was already read under these topics")
         self.assertEqual(later_coverage["check_id"], later_event["check_id"])
+
+    def test_scheduled_notification_summarizes_distinct_articles_after_the_save(self):
+        feed = FakeSource("a", [story("https://example.com/1", "Hound one")])
+        settings = watcher.Settings(notification_enabled=True, notification_min_articles=2, notification_sound=False)
+
+        def delivered(path, trigger, title, lines, **options):
+            self.assertTrue(self.store.contains("T", "https://example.com/3"))
+            self.assertEqual((path, trigger, title), (self.path, "scheduled", "HoundDog"))
+            self.assertEqual(lines, ("2 articles · 3 matches", "T 2 · U 1"))
+            self.assertEqual(options, {"sound": False, "banner": True})
+            return {"state": "submitted"}
+
+        with (
+            patch.object(watcher.windows_notifications, "supported", return_value=True),
+            patch.object(watcher.windows_notifications, "send", side_effect=delivered) as send,
+        ):
+            backfill = self.check([feed], settings=settings, trigger="scheduled")
+            self.assertEqual(backfill.notification["message"], "Only backfill matches were found.")
+            feed._items.append(story("https://example.com/2", "Hound two"))
+            below = self.check([feed], settings=settings, trigger="scheduled")
+            self.assertEqual(below.notification["state"], "skipped")
+            feed._items.extend([
+                story("https://example.com/3", "Hound one returns"),
+                story("https://example.com/4", "Hound four"),
+            ])
+            self.assertIsNone(self.check([feed], save=False, settings=settings, trigger="auto").notification)
+            send.assert_not_called()
+            result = self.check([feed], settings=settings, trigger="scheduled")
+            self.assertEqual(result.notification["state"], "submitted")
+            self.check([feed], settings=settings, trigger="scheduled")
+            send.assert_called_once()
+
+    def test_native_manual_notifications_are_opt_in_and_can_include_backfill(self):
+        feed = FakeSource("a", [story("https://example.com/1", "Hound one")])
+        settings = watcher.Settings(notification_enabled=True)
+        with (
+            patch.object(watcher.windows_notifications, "supported", return_value=True),
+            patch.object(watcher.windows_notifications, "send", return_value={"state": "failed"}) as send,
+        ):
+            self.assertIsNone(self.check([feed], settings=settings).notification)
+            send.assert_not_called()
+            second = FakeSource("b", [story("https://example.com/2", "Hound two")])
+            result = self.check([second], settings=watcher.Settings(
+                notification_enabled=True, notification_include_backfill=True, notification_manual_checks=True,
+            ), trigger="dashboard")
+            send.assert_called_once()
+            self.assertEqual(result.notification["state"], "failed")
+            self.assertTrue(self.store.contains("T", "https://example.com/2"))
 
     def test_first_seen_headline_and_date_stay_and_changes_become_revisions(self):
         def version(title, published_at, summary=""):

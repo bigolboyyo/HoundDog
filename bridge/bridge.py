@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from zoneinfo import ZoneInfoNotFoundError
@@ -19,9 +20,24 @@ from zoneinfo import ZoneInfoNotFoundError
 from config import DEFAULT_CONFIG, BridgeConfig, ConfigError
 from exports import ReadReport
 from overview import Overview, Report, Status, plain
-from study import GroupStats
+from study import (
+    AWAITING_CLOSE, BEFORE_PRICE_HISTORY, FIRST_PRICE_SESSION, IN_STUDY, INVALID_PREVIOUS_CLOSE,
+    MISSING_BAR, MISSING_PREVIOUS_BAR, NO_PRICE_HISTORY, OUTSIDE_COVERAGE, GroupStats,
+)
 
 EXIT_OK, EXIT_CONFIG = 0, 2
+
+ARTICLE_STATUS_LABELS = {
+    IN_STUDY: "in study",
+    AWAITING_CLOSE: "awaiting close",
+    FIRST_PRICE_SESSION: "on the first saved close",
+    BEFORE_PRICE_HISTORY: "before saved prices",
+    NO_PRICE_HISTORY: "without saved price history",
+    OUTSIDE_COVERAGE: "closed without a recorded price lookup",
+    MISSING_BAR: "missing daily bar",
+    MISSING_PREVIOUS_BAR: "missing prior bar",
+    INVALID_PREVIOUS_CLOSE: "invalid prior close",
+}
 
 
 def percent(value: float | None) -> str:
@@ -70,8 +86,15 @@ def print_report(report: Report) -> None:
         print(f"  Not watched by HoundDog: {study.unwatched_sessions} session(s). Missing bars: {len(study.missing_bars)}.")
         for event in study.events[-5:]:
             print(f"  - {event.session}: [{event.topic}] {event.title}")
+        counts = Counter(event.price_status for event in study.events)
+        stages = [f"{counts[key]} {label}" for key, label in ARTICLE_STATUS_LABELS.items() if counts[key]]
         if study.weekend_events:
-            print(f"  Weekend news: {len(study.weekend_events)} article(s).")
+            stages.append(f"{len(study.weekend_events)} weekend news")
+        if stages:
+            print(f"  Article status: {', '.join(stages)}")
+        after_close = sum(event.placement == "at_or_after_close" for event in study.events)
+        if after_close:
+            print(f"  After close: {after_close} article(s) assigned to the next trading session.")
         for note in study.notes:
             print(f"  Note: {note}")
         print()

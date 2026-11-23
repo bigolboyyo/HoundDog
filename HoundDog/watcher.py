@@ -34,6 +34,8 @@ from typing import IO, Any
 from urllib.parse import unquote, urlparse, urlsplit, urlunsplit
 from uuid import uuid4
 
+import windows_notifications
+
 READ_CHUNK_BYTES = 64 * 1024
 MAX_PARALLEL_FETCHES = 8
 ATOM = "{http://www.w3.org/2005/Atom}"
@@ -356,6 +358,12 @@ class Settings:
     history_retention_days: int = 90
     max_item_age_days: int = 0
     event_export: bool = True  # EventExport files for other programs
+    notification_enabled: bool = False
+    notification_min_articles: int = 1
+    notification_include_backfill: bool = False
+    notification_manual_checks: bool = False
+    notification_sound: bool = True
+    notification_banner: bool = True
 
     @property
     def max_feed_bytes(self) -> int:
@@ -390,6 +398,12 @@ class Settings:
             history_retention_days=setting_int(table, "history_retention_days", defaults.history_retention_days, 0, 3650),
             max_item_age_days=setting_int(table, "max_item_age_days", defaults.max_item_age_days, 0, 3650),
             event_export=setting_bool(table, "event_export", defaults.event_export),
+            notification_enabled=setting_bool(table, "notification_enabled", defaults.notification_enabled),
+            notification_min_articles=setting_int(table, "notification_min_articles", defaults.notification_min_articles, 1, 10000),
+            notification_include_backfill=setting_bool(table, "notification_include_backfill", defaults.notification_include_backfill),
+            notification_manual_checks=setting_bool(table, "notification_manual_checks", defaults.notification_manual_checks),
+            notification_sound=setting_bool(table, "notification_sound", defaults.notification_sound),
+            notification_banner=setting_bool(table, "notification_banner", defaults.notification_banner),
         )
 
     def oldest_published_at(self, now: datetime) -> str:
@@ -630,6 +644,7 @@ class SeenStore:
     per-feed state that conditional requests and backoff rely on."""
 
     def __init__(self, path: Path) -> None:
+        self.path = path
         self._db = sqlite3.connect(path)
         with self._db:
             ensure_seen_schema(self._db)
@@ -1592,9 +1607,46 @@ class CheckOutcome:
     pruned: int
     export_error: str
     history_reset: bool = False
+    notification: dict[str, str] | None = None
 
 
 HISTORY_RESET_DURING_CHECK = "History was cleared during the check. Run the check again."
+
+
+def notify_saved_check(
+    settings: Settings, db_path: Path, result: CheckResult, trigger: str,
+) -> dict[str, str] | None:
+    if not settings.notification_enabled or not windows_notifications.supported() or (
+        trigger not in {"scheduled", "auto"} and not settings.notification_manual_checks
+    ):
+        return None
+    matches = [
+        match for match in result.matches
+        if settings.notification_include_backfill or match.feed_url not in result.backfill_sources
+    ]
+    articles = len({match.item.link for match in matches})
+    if not matches:
+        message = "Only backfill matches were found." if result.matches else "No new matches were saved."
+        return windows_notifications.record_delivery(db_path, trigger, "skipped", message)
+    if articles < settings.notification_min_articles:
+        return windows_notifications.record_delivery(
+            db_path, trigger, "skipped",
+            f"{articles:,} distinct articles. Your notification minimum is {settings.notification_min_articles:,}.",
+        )
+    article_label = "article" if articles == 1 else "articles"
+    match_label = "match" if len(matches) == 1 else "matches"
+    counts = f"{articles:,} {article_label} · {len(matches):,} {match_label}"
+    topics = Counter(match.topic for match in matches)
+    details = [f"{strip_controls(topic)[:32]} {count:,}" for topic, count in topics.most_common(3)]
+    remaining = len(topics) - len(details)
+    if remaining:
+        details.append(f"+{remaining} topics")
+    if result.failed_sources:
+        details.append(f"{len(result.failed_sources)} feeds failed")
+    return windows_notifications.send(
+        db_path, trigger, "HoundDog", (counts, " · ".join(details)),
+        sound=settings.notification_sound, banner=settings.notification_banner,
+    )
 
 
 def perform_check(
@@ -1637,7 +1689,8 @@ def perform_check(
             export.flush()
         except (OSError, sqlite3.Error) as error:
             export_error = f"{error} (records are queued for the next saved check)"
-    return CheckOutcome(result, pruned, export_error)
+    notification = notify_saved_check(config.settings, store.path, result, trigger)
+    return CheckOutcome(result, pruned, export_error, notification=notification)
 
 
 def export_directory(db_path: Path) -> Path:
@@ -1662,6 +1715,8 @@ def run_cli_check(
               f"{config.settings.history_retention_days} day(s).")
     if outcome.export_error:
         print(f"warning: event export not written yet: {outcome.export_error}", file=sys.stderr)
+    if outcome.notification and outcome.notification["state"] in {"failed", "blocked", "unsupported"}:
+        print(f"warning: {outcome.notification['message']}", file=sys.stderr)
     return outcome.result
 
 

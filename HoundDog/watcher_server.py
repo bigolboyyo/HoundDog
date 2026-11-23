@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import scheduled_task
 import watcher
+import windows_notifications
 
 T = TypeVar("T")
 
@@ -742,6 +743,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if path == "/api/topics":
+                self.send_json(HTTPStatus.OK, {"topics": read_raw_config()["topics"]})
+                return
+
+            if path == "/api/notifications":
+                self.send_json(HTTPStatus.OK, {
+                    **windows_notifications.delivery_status(),
+                    "supported": windows_notifications.supported(),
+                    "last": windows_notifications.last_delivery(DB_PATH),
+                })
+                return
+
             if path == "/api/health":
                 raw = read_raw_config()
                 sources = [(source.name, source.url) for source in configured_sources(raw)]
@@ -852,8 +865,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         "skipped_sources": [{"name": skip.name, "reason": skip.reason} for skip in result.skipped],
                         "pruned": outcome.pruned,
                         "export_error": outcome.export_error,
+                        "windows_notifications": config.settings.notification_enabled and windows_notifications.supported(),
+                        "notification": outcome.notification,
                     },
                 )
+                return
+
+            if path == "/api/notifications/test":
+                self.read_json()
+                settings = watcher.Settings.from_table(read_raw_config()["settings"])
+                status = windows_notifications.send(
+                    DB_PATH, "test", "HoundDog notification test",
+                    ("This is a test of the Windows notification settings.",),
+                    sound=settings.notification_sound, banner=settings.notification_banner,
+                )
+                self.send_json(HTTPStatus.OK, status)
                 return
 
             if path == "/api/topic-test":

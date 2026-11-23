@@ -172,7 +172,7 @@ async function loadDashboard({
         });
       }
       if (selector === ".settings-nav-button") {
-        return ["appearance", "display"].map((panel) => {
+        return ["appearance", "display", "notifications"].map((panel) => {
           const button = element(`#settings-nav-${panel}`);
           button.dataset.panel = panel;
           return button;
@@ -884,6 +884,54 @@ test("notifications stay off when the browser refuses permission", async () => {
   assert.equal(elements.get("storage").get("keyword-watcher-notifications"), "false");
 });
 
+test("Windows notification settings show delivery status and can send a test", async () => {
+  const elements = await loadDashboard({
+    storedSettingsSection: "notifications",
+    apiResponses: {
+      "/api/notifications": { supported: true, state: "setup", message: "Send a test to set up HoundDog.", last: null },
+      "/api/notifications/test": {
+        state: "verified", message: "Windows Notification Center received the test.",
+        at: "2026-11-23T15:00:00+00:00", trigger: "test",
+      },
+    },
+  });
+  elements.get("#tool-button-settings").listeners.click();
+  await settle();
+  assert.equal(elements.get("#settings-notifications").hidden, false);
+  assert.match(elements.get("#windows-notification-status").textContent, /Send a test/);
+  await elements.get("#notification-test").listeners.click();
+  assert.match(elements.get("#notification-last-result").textContent, /Test .* Notification Center received/);
+  const request = elements.get("requests").find(({ path }) => path === "/api/notifications/test");
+  assert.equal(request.method, "POST");
+  assert.equal(request.body, "{}");
+});
+
+test("automatic checks leave notifications to Windows when it is configured", async () => {
+  class UnexpectedBrowserNotification {
+    static permission = "granted";
+    constructor() {
+      throw new Error("the browser should not send a second notification");
+    }
+  }
+  const elements = await loadDashboard({
+    notification: UnexpectedBrowserNotification,
+    storedPreferences: { "auto-check-interval": "5", "auto-check-action": "save", notifications: "true" },
+    checkResult: {
+      matches: [{ topic: "AI tooling", keywords: [], item: { link: "https://example.com/a", title: "News" } }],
+      windows_notifications: true,
+      notification: {
+        state: "blocked", message: "Windows notifications are off for HoundDog.",
+        at: "2026-11-23T15:00:00+00:00", trigger: "auto",
+      },
+    },
+  });
+  const timer = elements.get("timers").find((pending) => pending.delay === 5 * 60_000 && !pending.cleared);
+  timer.callback();
+  await settle();
+  assert.equal(elements.get("#notify-new-matches").checked, true);
+  assert.match(elements.get("#notice").textContent, /Saved to History.*Windows notifications are off/);
+});
+
 test("a failed desktop notification preserves the saved check and refreshes the inbox", async () => {
   class UnavailableNotification {
     static permission = "granted";
@@ -961,10 +1009,10 @@ test("a check whose event export could not be written says so", async () => {
   assert.match(elements.get("#notice").textContent, /Event export not written yet: file in use \(3 record\(s\) waiting\)\./);
 });
 
-test("Settings has Appearance, Display, Checking, Feeds, and Data sections", () => {
+test("Settings includes a Notifications section alongside the existing settings", () => {
   const html = readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
   const sections = [...html.matchAll(/class="settings-nav-button" type="button" data-panel="(\w+)"/g)].map((match) => match[1]);
-  assert.deepEqual(sections, ["appearance", "display", "checking", "feeds", "data"]);
+  assert.deepEqual(sections, ["appearance", "display", "checking", "notifications", "feeds", "data"]);
   for (const section of sections) assert.match(html, new RegExp(`id="settings-${section}"`));
   assert.match(html, /href="\/api\/export\?format=json" download/);
   assert.match(html, /href="\/api\/export\?format=csv" download/);

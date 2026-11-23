@@ -40,6 +40,10 @@ topics = ["AMZN"]
 symbol = "META"
 topics = ["META"]
 
+[[symbols]]
+symbol = "ANT"
+topics = ["ANT"]
+
 [[groups]]
 name = "Tech Bros"
 symbols = ["AAPL", "MSFT", "TSLA"]

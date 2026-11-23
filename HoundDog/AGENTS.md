@@ -11,6 +11,8 @@ the [export contract](INTEGRATION.md) for record formats, and the
   the CLI. Uses only the Python standard library (Python 3.11+).
 - `watcher_server.py`: standard-library HTTP server and JSON API for the
   dashboard. It reads and writes the project files beside itself.
+- `windows_notifications.py`: windowless Windows sender, test receipt, and
+  latest delivery status shared by the dashboard and the scheduled runner.
 - `hounddog_app.py` and `build_exe.ps1`: Windows executable entry point and
   build. The bundle provides dashboard assets. Configuration, SQLite, and
   exports live beside the executable. The build also produces the
@@ -185,8 +187,13 @@ the [export contract](INTEGRATION.md) for record formats, and the
 - Settings live in one of two places. Anything the CLI needs (fetch limits,
   user agent, history retention) goes in `[settings]` in `watch.toml`,
   validated by `watcher.Settings.from_table`, which rejects unknown keys.
-  Dashboard-only preferences (theme, images, auto-check, notifications, page
-  sizes, open tab) go in browser `localStorage` under `keyword-watcher-*`.
+  Windows notification preferences are shared in `watch.toml` and each eligible
+  saved check submits at most one notification after its commit, through
+  `windows_notifications.py`. The latest result lives in
+  `notification-status.json` beside the database. The test endpoint uses
+  the saved banner and sound preferences and can run before opting in.
+  Dashboard-only preferences (theme, images, auto-check, browser notifications,
+  page sizes, open tab) go in browser `localStorage` under `keyword-watcher-*`.
 - `SeenStore.prune` runs after every saved check (CLI and dashboard), never on
   a dry run. Retention compares `first_seen` strings, so every writer must use
   UTC `isoformat(timespec="seconds")`; import normalizes to that.

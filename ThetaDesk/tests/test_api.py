@@ -70,6 +70,18 @@ class StockHistoryApiTests(unittest.TestCase):
         get_symbols.assert_called_once_with()
 
     @patch("api.get_eod_stock_history")
+    def test_raw_history_serializes_missing_numbers_and_reports_unserializable_rows(self, get_history) -> None:
+        get_history.side_effect = [[{"close": float("nan")}], [{"close": object()}]]
+        response = self.client.get(self.url.replace("/AAPL/", "/aapl/"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["symbol"], "AAPL")
+        self.assertEqual(response.json()["data"], [{"close": None}])
+
+        failed = self.client.get(self.url)
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(failed.json()["detail"], "ThetaData returned an unsupported history format.")
+
+    @patch("api.get_eod_stock_history")
     def test_returns_polars_data_as_json_records(
         self,
         get_history: unittest.mock.Mock,

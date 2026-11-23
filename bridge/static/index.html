@@ -10,20 +10,96 @@
   <header class="top">
     <h1>ThetaHound Bridge</h1>
     <div class="top-actions">
-      <span id="updated" class="muted"></span>
+      <time id="today" class="top-date"></time>
       <button id="refresh" type="button">Refresh</button>
-      <button id="shutdown" type="button">Shut down</button>
+      <details class="toolbar-menu service-menu">
+        <summary>Service</summary>
+        <div class="toolbar-popover">
+          <span id="updated" class="muted"></span>
+          <a id="open-sources" href="#source-connections">Sources and connections</a>
+          <button id="shutdown" type="button">Shut down Bridge</button>
+        </div>
+      </details>
     </div>
   </header>
   <p id="banner" class="banner" hidden></p>
   <p id="notice" class="notice" role="alert" hidden></p>
 
   <main>
+    <section class="panel watchlist" aria-labelledby="watchlist-title">
+      <div class="section-heading">
+        <h2 id="watchlist-title">Watchlist</h2>
+        <p class="muted" id="market-target"></p>
+      </div>
+      <div class="watchlist-grid" id="watchlist" aria-label="Select a watched ticker"></div>
+      <details class="watch-editor">
+        <summary>Manage watchlist</summary>
+        <p class="muted">Add a HoundDog topic and include the ticker in the study. Groups pool the sessions from their member tickers.</p>
+        <p id="watch-off" class="muted" hidden></p>
+        <form id="watch-form">
+          <fieldset>
+            <legend>Tickers (those with prices in ThetaDesk, plus any you add)</legend>
+            <div id="ticker-choices" class="choices"></div>
+            <div class="inline">
+              <label for="other-ticker">Another ticker</label>
+              <input id="other-ticker" maxlength="16" autocomplete="off" placeholder="e.g. TSLA">
+              <button id="add-other" type="button">Add</button>
+            </div>
+          </fieldset>
+          <div id="keyword-rows" class="keyword-rows"></div>
+          <div class="inline">
+            <label for="group-name">Group (optional)</label>
+            <input id="group-name" maxlength="80" list="group-names" autocomplete="off" placeholder="e.g. Tech Bros">
+            <datalist id="group-names"></datalist>
+          </div>
+          <button id="watch-submit" type="submit" class="primary" disabled>Watch selected tickers</button>
+          <button id="watch-load" type="submit" disabled>Watch and load price history</button>
+          <ul id="watch-results" class="results" aria-live="polite"></ul>
+        </form>
+      </details>
+    </section>
+
     <section class="panel" id="ticker-detail" aria-labelledby="detail-title">
       <div class="section-heading detail-heading">
         <h2 id="detail-title" tabindex="-1">Ticker study</h2>
-        <label for="detail-symbol" class="visually-hidden">Ticker</label>
-        <select id="detail-symbol"></select>
+        <div id="view-controls" class="view-controls" hidden>
+          <div id="range-presets" class="range-presets" role="group" aria-label="Chart range">
+            <button type="button" data-preset="week" aria-pressed="true">Week</button>
+            <button type="button" data-preset="1m" aria-label="One month" aria-pressed="false">1M</button>
+            <button type="button" data-preset="3m" aria-label="Three months" aria-pressed="false">3M</button>
+            <button type="button" data-preset="6m" aria-label="Six months" aria-pressed="false">6M</button>
+            <button type="button" data-preset="1y" aria-label="One year" aria-pressed="false">1Y</button>
+          </div>
+          <div class="week-nav" role="group" aria-label="Displayed dates">
+            <button id="week-prev" type="button" aria-label="Previous week">‹</button>
+            <div class="week-period">
+              <span id="view-kind"></span>
+              <strong id="week-dates" aria-live="polite"></strong>
+            </div>
+            <button id="week-next" type="button" aria-label="Next week">›</button>
+          </div>
+          <button id="current-week" type="button" hidden>This week</button>
+          <details id="range-tools" class="toolbar-menu range-tools">
+            <summary>Dates &amp; pins</summary>
+            <div class="toolbar-popover">
+              <form id="range-form" class="range-controls">
+                <label>From <input id="range-start" type="date" required></label>
+                <label>Through <input id="range-end" type="date" required></label>
+                <div class="range-actions">
+                  <button type="submit">Apply range</button>
+                  <button id="range-reset" type="button" hidden>Weekly view</button>
+                  <button id="range-all" type="button" hidden>All saved prices</button>
+                  <button id="pin-range" type="button" hidden>Pin this range</button>
+                </div>
+              </form>
+              <section id="pins-panel" class="pins-panel" aria-labelledby="pins-title" hidden>
+                <h3 id="pins-title">Pinned ranges</h3>
+                <p class="muted" id="pin-status" role="status"></p>
+                <ul id="pins-list" class="pins-list"></ul>
+              </section>
+            </div>
+          </details>
+        </div>
       </div>
       <dl id="data-freshness" class="data-freshness" hidden>
         <div>
@@ -35,41 +111,38 @@
           <dd id="prices-through"></dd>
         </div>
         <div>
-          <dt>Last HoundDog check (ET)</dt>
+          <dt>HoundDog checked (ET)</dt>
           <dd id="last-news-check"></dd>
         </div>
+        <div>
+          <dt>Daily prices</dt>
+          <dd id="price-readiness"></dd>
+        </div>
       </dl>
-      <form id="range-form" class="inline range-controls" hidden>
-        <label for="range-start">From</label>
-        <input id="range-start" type="date" required>
-        <label for="range-end">Through</label>
-        <input id="range-end" type="date" required>
-        <button type="submit">Apply range</button>
-        <button id="range-reset" type="button" hidden>Reset</button>
-        <button id="pin-range" type="button" hidden>Pin this range</button>
-      </form>
       <p id="range-status" class="muted" role="status" hidden></p>
-      <section id="pins-panel" class="pins-panel" aria-labelledby="pins-title" hidden>
-        <h3 id="pins-title">Pinned ranges</h3>
-        <p class="muted" id="pin-status" role="status"></p>
-        <ul id="pins-list" class="pins-list"></ul>
-      </section>
       <div class="ticker-workspace">
         <div class="ticker-chart">
           <div id="chart" class="chart" role="group" aria-label="Closing prices and news markers"></div>
           <p id="chart-key" class="legend" hidden>
-            <span class="dot news" aria-hidden="true"></span> Select a news marker to see the price move and articles.
+            <span class="dot news" aria-hidden="true"></span> Select a price chart marker to see the session’s articles.
           </p>
           <article id="session-evidence" class="session-evidence" aria-live="polite" hidden></article>
+          <section id="daily-moves" class="daily-moves" aria-labelledby="daily-moves-title" hidden>
+            <h3 id="daily-moves-title">Daily moves</h3>
+            <figure class="daily-strip">
+              <figcaption>Close-to-close return</figcaption>
+              <div id="daily-returns" class="chart"></div>
+            </figure>
+            <figure id="daily-volume-panel" class="daily-strip" hidden>
+              <figcaption>Volume vs. ticker median</figcaption>
+              <div id="daily-volume" class="chart"></div>
+            </figure>
+          </section>
         </div>
         <section id="weekly-news" class="weekly-news" aria-labelledby="weekly-news-title" hidden>
           <div class="weekly-news-header">
             <h3 id="weekly-news-title">Weekly news</h3>
-            <div class="week-nav" role="group" aria-label="News week">
-              <button id="week-prev" type="button" aria-label="Previous news week">‹</button>
-              <span id="week-dates" aria-live="polite"></span>
-              <button id="week-next" type="button" aria-label="Next news week">›</button>
-            </div>
+            <span id="news-period" class="muted" hidden></span>
           </div>
           <div class="week-scope" role="group" aria-label="Days to show">
             <button id="weekdays-news" type="button" aria-pressed="true">Weekdays</button>
@@ -83,6 +156,28 @@
           </section>
         </section>
       </div>
+      <section id="move-comparison" class="move-comparison" aria-labelledby="move-comparison-title" hidden>
+        <div class="section-heading move-comparison-heading">
+          <h3 id="move-comparison-title">News vs. quiet</h3>
+          <p class="muted">Absolute close-to-close moves in the chart range</p>
+        </div>
+        <div class="move-comparison-grid">
+          <div class="move-comparison-label">
+            <h4>News sessions</h4>
+            <p class="muted" id="news-move-summary"></p>
+          </div>
+          <div id="news-move-dots" class="move-dots"></div>
+          <div class="move-comparison-label">
+            <h4>Quiet sessions</h4>
+            <p class="muted" id="quiet-move-summary"></p>
+          </div>
+          <div id="quiet-move-dots" class="move-dots"></div>
+          <div id="move-scale" class="move-scale muted" aria-hidden="true" hidden>
+            <span>0%</span><span id="move-scale-max"></span>
+          </div>
+        </div>
+        <p id="move-comparison-note" class="muted"></p>
+      </section>
       <details id="study-details" class="study-guide" hidden>
         <summary>Study details</summary>
         <h3>HoundDog activity</h3>
@@ -130,39 +225,6 @@
       </details>
     </section>
 
-    <section class="panel watchlist" aria-labelledby="watchlist-title">
-      <div class="section-heading">
-        <h2 id="watchlist-title">Watchlist</h2>
-        <p class="muted" id="market-target"></p>
-      </div>
-      <div class="watchlist-grid" id="watchlist" aria-live="polite"></div>
-      <details class="watch-editor">
-        <summary>Watch tickers</summary>
-        <p class="muted">Add a HoundDog topic and include the ticker in the study. Groups pool the sessions from their member tickers.</p>
-        <p id="watch-off" class="muted" hidden></p>
-        <form id="watch-form">
-          <fieldset>
-            <legend>Tickers (those with prices in ThetaDesk, plus any you add)</legend>
-            <div id="ticker-choices" class="choices"></div>
-            <div class="inline">
-              <label for="other-ticker">Another ticker</label>
-              <input id="other-ticker" maxlength="16" autocomplete="off" placeholder="e.g. TSLA">
-              <button id="add-other" type="button">Add</button>
-            </div>
-          </fieldset>
-          <div id="keyword-rows" class="keyword-rows"></div>
-          <div class="inline">
-            <label for="group-name">Group (optional)</label>
-            <input id="group-name" maxlength="80" list="group-names" autocomplete="off" placeholder="e.g. Tech Bros">
-            <datalist id="group-names"></datalist>
-          </div>
-          <button id="watch-submit" type="submit" class="primary" disabled>Watch selected tickers</button>
-          <button id="watch-load" type="submit" disabled>Watch and load price history</button>
-          <ul id="watch-results" class="results" aria-live="polite"></ul>
-        </form>
-      </details>
-    </section>
-
     <section class="panel" aria-labelledby="study-title">
       <h2 id="study-title">Study: news sessions against quiet sessions</h2>
       <details class="study-guide">
@@ -196,11 +258,15 @@
       </div>
       <details id="study-notes-panel" class="study-guide" hidden>
         <summary>Data notes</summary>
-        <ul id="study-notes" class="notes"></ul>
+        <section class="article-status" aria-labelledby="article-status-title">
+          <h3 id="article-status-title">Article status by ticker</h3>
+          <p id="article-status-scope"></p>
+          <ul id="article-status-list" class="article-status-list"></ul>
+        </section>
       </details>
     </section>
 
-    <details class="panel source-details">
+  <details class="panel source-details" id="source-connections">
       <summary>Sources and connections</summary>
       <div class="cards">
         <article class="card">
@@ -213,6 +279,7 @@
           <dl id="thetadesk-facts" class="facts"></dl>
         </article>
       </div>
+      <ul id="study-notes" class="notes" hidden></ul>
     </details>
   </main>
   <div id="stopped" class="stopped" role="alert" hidden>

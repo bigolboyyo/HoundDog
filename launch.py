@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import subprocess
@@ -90,10 +91,114 @@ APPS: tuple[App, ...] = (
 
 def port_in_use(port: int) -> bool:
     try:
-        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
-            return True
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if sys.platform == "win32":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
     except OSError:
-        return False
+        return True
+    return False
+
+
+@dataclass(frozen=True)
+class PortOwner:
+    pid: int
+    name: str
+    executable: str
+    started_at: str
+
+
+class PortProcessError(RuntimeError):
+    pass
+
+
+PORT_PROCESS_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+try {
+    $port = [int]$env:THETAHOUND_LAUNCHER_PORT
+    $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
+    $owners = @($listeners | Where-Object {
+        $_.LocalAddress -in @('127.0.0.1', '0.0.0.0', '::ffff:127.0.0.1', '::ffff:0.0.0.0')
+    } | Select-Object -ExpandProperty OwningProcess -Unique)
+    if (!$owners.Count -and $env:THETAHOUND_LAUNCHER_IPV4_LISTENS -eq '1') {
+        # An IPv6 wildcard listener can also accept IPv4 connections.
+        $owners = @($listeners | Where-Object { $_.LocalAddress -eq '::' } |
+            Select-Object -ExpandProperty OwningProcess -Unique)
+    }
+    if ($owners.Count -ne 1) { throw "Could not identify one local listener on port $port." }
+
+    $ownerId = $owners[0]
+    if ($ownerId -le 4 -or $ownerId -eq [int]$env:THETAHOUND_LAUNCHER_PID) {
+        throw "Port $port is held by a system process or the launcher."
+    }
+    $process = Get-Process -Id $ownerId
+    # Hold a handle to the actual process while verifying and stopping it.
+    $null = $process.Handle
+    $started = $process.StartTime.ToUniversalTime().Ticks.ToString()
+    if ($env:THETAHOUND_LAUNCHER_EXPECTED_PID) {
+        if ($ownerId -ne [int]$env:THETAHOUND_LAUNCHER_EXPECTED_PID -or
+            $started -ne $env:THETAHOUND_LAUNCHER_EXPECTED_START) {
+            throw "The owner of port $port changed. Review the current process before trying again."
+        }
+        Stop-Process -InputObject $process -Force
+    } else {
+        [PSCustomObject]@{
+            pid = $ownerId
+            name = $process.ProcessName
+            executable = [string]$process.Path
+            started_at = $started
+        } | ConvertTo-Json -Compress
+    }
+} catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}
+"""
+
+
+def port_process(port: int, *, expected: PortOwner | None = None) -> str:
+    if sys.platform != "win32":
+        raise PortProcessError("The launcher can identify port owners on Windows.")
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            ipv4_listens = "1"
+    except OSError:
+        ipv4_listens = "0"
+    env = {
+        **os.environ,
+        "THETAHOUND_LAUNCHER_PORT": str(port),
+        "THETAHOUND_LAUNCHER_PID": str(os.getpid()),
+        "THETAHOUND_LAUNCHER_IPV4_LISTENS": ipv4_listens,
+        "THETAHOUND_LAUNCHER_EXPECTED_PID": str(expected.pid) if expected else "",
+        "THETAHOUND_LAUNCHER_EXPECTED_START": expected.started_at if expected else "",
+    }
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", PORT_PROCESS_SCRIPT],
+            env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PortProcessError(f"Could not inspect port {port}: {error}") from error
+    if result.returncode:
+        raise PortProcessError(result.stderr.strip() or f"Could not access the process on port {port}.")
+    return result.stdout
+
+
+def port_owner(port: int) -> PortOwner:
+    try:
+        return PortOwner(**json.loads(port_process(port)))
+    except (ValueError, TypeError) as error:
+        raise PortProcessError(f"Windows returned an invalid process description for port {port}.") from error
+
+
+def read_port(value: str) -> int | None:
+    try:
+        port = int(value)
+    except ValueError:
+        return None
+    return port if 1 <= port <= 65535 else None
 
 
 def log_path(app: App) -> Path:
@@ -225,6 +330,7 @@ def show_dialog() -> None:
     style.configure("TLabel", background=background, foreground=muted, font=("Segoe UI", 10))
     style.configure("Title.TLabel", foreground=text, font=("Segoe UI", 25, "bold"))
     style.configure("AppInfo.TLabel", background=surface)
+    style.configure("PortBusy.TLabel", background=surface, foreground="#ffbc78")
     style.configure(
         "TCheckbutton", background=surface, foreground=text, focuscolor=accent,
         font=("Segoe UI", 10),
@@ -251,6 +357,7 @@ def show_dialog() -> None:
         lightcolor=surface, darkcolor=surface, focuscolor=accent, padding=(18, 7), font=("Segoe UI", 10),
     )
     style.map("TButton", background=[("pressed", background), ("active", "#2a3548")])
+    style.configure("Force.TButton", foreground="#ffbc78", padding=(8, 3))
     style.configure(
         "Start.TButton", background=accent, foreground=ink, bordercolor=accent,
         lightcolor=accent, darkcolor=accent, focuscolor=ink, font=("Segoe UI", 10, "bold"),
@@ -265,7 +372,7 @@ def show_dialog() -> None:
 
     panel = ttk.Frame(window, padding=(26, 22))
     panel.grid(sticky="nsew")
-    panel.columnconfigure(0, minsize=468)
+    panel.columnconfigure(0, minsize=540)
     ttk.Label(panel, text="ThetaHound", style="Title.TLabel").grid(row=0, column=0, sticky="w")
     ttk.Label(panel, text="Choose which apps to start.").grid(
         row=1, column=0, sticky="w", pady=(2, 18),
@@ -273,6 +380,7 @@ def show_dialog() -> None:
     card = ttk.Frame(panel, padding=(16, 4), style="Card.TFrame", borderwidth=1, relief="solid")
     card.grid(row=2, column=0, sticky="ew")
     card.columnconfigure(0, weight=1)
+    card.columnconfigure(3, minsize=126)
     descriptions = {
         "hounddog": "Feed checks and news inbox",
         "thetadesk": "Market data and saved charts",
@@ -280,7 +388,10 @@ def show_dialog() -> None:
     }
     choices: dict[str, tk.BooleanVar] = {}
     terminals: dict[str, tuple[tk.BooleanVar, ttk.Checkbutton]] = {}
+    port_values: dict[str, tk.StringVar] = {}
     port_fields: dict[str, ttk.Entry] = {}
+    port_statuses: dict[str, ttk.Label] = {}
+    force_buttons: dict[str, ttk.Button] = {}
     launched_ports: dict[str, int] = {}
     for index, app in enumerate(APPS):
         row = index * 3
@@ -295,14 +406,64 @@ def show_dialog() -> None:
         ttk.Label(card, text="Port", style="AppInfo.TLabel").grid(
             row=row, column=1, sticky="w", padx=(0, 18), pady=(8, 0),
         )
-        entry = port_fields[app.key] = ttk.Entry(card, style="Port.TEntry", width=7)
-        entry.insert(0, str(app.port))
+        port_value = port_values[app.key] = tk.StringVar(value=str(app.port))
+        entry = port_fields[app.key] = ttk.Entry(card, style="Port.TEntry", width=7, textvariable=port_value)
         entry.grid(row=row + 1, column=1, sticky="w", padx=(0, 18), pady=(0, 10))
         terminal_box = ttk.Checkbutton(card, text="Show terminal", variable=terminal)
         terminal_box.grid(row=row, column=2, rowspan=2, sticky="e")
         terminals[app.key] = terminal, terminal_box
+        port_status = port_statuses[app.key] = ttk.Label(card, style="AppInfo.TLabel")
+        port_status.grid(row=row, column=3, sticky="w", padx=(14, 0), pady=(8, 0))
+        force_button = force_buttons[app.key] = ttk.Button(
+            card, text="Force shut down", style="Force.TButton", command=lambda key=app.key: force_shutdown(key),
+        )
+        force_button.grid(row=row + 1, column=3, sticky="w", padx=(14, 0), pady=(0, 10))
+        force_button.grid_remove()
         if index < len(APPS) - 1:
-            ttk.Separator(card).grid(row=row + 2, column=0, columnspan=3, sticky="ew")
+            ttk.Separator(card).grid(row=row + 2, column=0, columnspan=4, sticky="ew")
+
+    def refresh_port(key: str) -> None:
+        port = read_port(port_values[key].get())
+        occupied = port is not None and port_in_use(port)
+        label = "Invalid port" if port is None else "In use" if occupied else "Available"
+        port_statuses[key].configure(text=label, style="PortBusy.TLabel" if occupied else "AppInfo.TLabel")
+        if occupied:
+            force_buttons[key].grid()
+        else:
+            force_buttons[key].grid_remove()
+
+    def refresh_ports() -> None:
+        for key in port_values:
+            refresh_port(key)
+
+    def check_ports_periodically() -> None:
+        refresh_ports()
+        window.after(1500, check_ports_periodically)
+
+    def force_shutdown(key: str) -> None:
+        port = read_port(port_values[key].get())
+        if port is None or not port_in_use(port):
+            refresh_port(key)
+            return
+        try:
+            owner = port_owner(port)
+            details = f"\n{owner.executable}" if owner.executable else ""
+            confirmed = messagebox.askyesno(
+                "Force shut down process?",
+                f"Port {port} is held by {owner.name} (PID {owner.pid}).{details}\n\n"
+                "Force shut down ends this process immediately. Requests in progress and unsaved work may be lost.\n\n"
+                "Force shut down this process?",
+                icon=messagebox.WARNING, default=messagebox.NO, parent=window,
+            )
+            if confirmed:
+                port_process(port, expected=owner)
+                for launched_key in tuple(launched_ports):
+                    if launched_ports[launched_key] == port:
+                        del launched_ports[launched_key]
+        except PortProcessError as error:
+            messagebox.showerror("Could not force shut down", str(error), parent=window)
+        finally:
+            refresh_ports()
 
     def start() -> None:
         selected = {}
@@ -311,12 +472,9 @@ def show_dialog() -> None:
             if not choices[app.key].get():
                 continue
             entry = port_fields[app.key]
-            try:
-                port = int(entry.get())
-            except ValueError:
-                port = 0
+            port = read_port(entry.get())
             problem = ""
-            if not 1 <= port <= 65535:
+            if port is None:
                 problem = f"Enter a port from 1 to 65535 for {app.name}."
             elif port in used_ports:
                 problem = f"{app.name} and {used_ports[port]} both use port {port}. Choose a different port."
@@ -338,6 +496,7 @@ def show_dialog() -> None:
             if key not in errors:
                 launched_ports[key] = options.port
         update_controls()
+        refresh_ports()
         messagebox.showerror("Could not start selected apps", "\n\n".join(errors.values()), parent=window)
 
     def update_controls() -> None:
@@ -357,6 +516,9 @@ def show_dialog() -> None:
     start_button.pack(side="left")
     window.bind("<Return>", lambda _: start())
     window.bind("<Escape>", lambda _: window.destroy())
+    for key, port_value in port_values.items():
+        port_value.trace_add("write", lambda *_, key=key: refresh_port(key))
+    check_ports_periodically()
 
     window.update_idletasks()
     x = max(0, (window.winfo_screenwidth() - window.winfo_reqwidth()) // 2)

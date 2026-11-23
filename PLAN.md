@@ -3,11 +3,27 @@
 Start with the [workspace README](README.md) for setup, launch, rebuilds,
 and shutdown. Use this guide to pick up development or transfer a checkout.
 
+## Resume this checkout
+
+1. Open `start.bat` after signing in to Windows. The current HoundDog and
+   ThetaDesk executables can be reused. Bridge loads its files from the
+   checkout, so reload its browser tab for the current layout.
+2. In Bridge, use the ticker strip and **Week**, **1M**, **3M**, **6M**, or
+   **1Y**. Use **Dates & pins** for a custom range or a saved pin. **Service**
+   opens source diagnostics and the shutdown control.
+3. The chart pairs news with completed daily returns. The watchlist's
+   **Update** action loads a new close after ThetaDesk can save it at
+   6 p.m. ET. A ticker with news can accrue a news session before it has a
+   quiet session for comparison.
+4. In HoundDog, **Settings → Checking** shows the saved-check task.
+   **Settings → Notifications** shows Windows delivery status, **Send test**,
+   and the opt-in for automatic summaries.
+
 ## Project map
 
 | Component | Entry points | Owns |
 | --- | --- | --- |
-| Launcher | `start.bat` opens `launch.py`. `build.bat` prepares the build environments and packages both Windows apps. | Default ports, per-launch port overrides, and terminal visibility. Hidden starts write to `logs`. |
+| Launcher | `start.bat` opens `launch.py`. `build.bat` prepares the build environments and packages both Windows apps. | Default ports, per-launch port overrides, occupied-port checks, confirmed force shutdown, and terminal visibility. Hidden starts write to `logs`. |
 | [HoundDog](HoundDog/README.md) | `watcher.py` is the CLI. `watcher_server.py` serves the dashboard on 8080. `HoundDog.exe` packages both. | `watch.toml`, `watcher.db`, and `exports` beside the app. `HoundDogScheduled.exe` runs the Windows saved-check task and shares this checkout's data. |
 | [ThetaDesk](ThetaDesk/README.md) | `start_project.py` prepares the venv and starts `api.py` on 8000. The installed executable is `ThetaDesk\dist\ThetaDesk\ThetaDesk.exe`. | `market.db` and `exports` in `%LOCALAPPDATA%\ThetaDesk`, shared by source and packaged starts. Pins live in the database. Credentials live beside the active app. |
 | [Bridge](bridge/README.md) | `server.py` serves the dashboard on 8090. `bridge.py status` and `report` read the same exports. | `bridge.toml` stores export paths, local API URLs, ticker-to-topic mappings, and groups. |
@@ -18,13 +34,21 @@ HoundDog's API for topic setup and ThetaDesk's API for price loads and pins.
 The [export contract](HoundDog/INTEGRATION.md) defines record IDs, timestamps,
 and retry behavior.
 
+Bridge's [research feed](bridge/README.md#research-feed) is the read-only
+multi-ticker interface for models and other local apps. It uses news detection,
+check completion, revision observation, and market save times. The per-ticker
+timeline reads those same observations. New ThetaDesk exports stamp when data
+was saved. Legacy bar times remain unknown and those bars can be read as
+reference prices by session date. Bridge uses HoundDog's lightweight topic
+endpoint for the dashboard connection check.
+
 ## Behavior to preserve
 
 - **HoundDog.** Saved checks write History and coverage. Previews log activity
   and can update backoff. The Inbox shows the last recorded check. Reload it
-  to pick up background runs. Dashboard auto-check can show one desktop
-  notification per run, with article and match counts. The Windows background
-  job uses a separate windowless runner.
+  to pick up background runs. When enabled in Settings, native Windows
+  notifications summarize qualifying saved checks from the dashboard or
+  background job. The Windows job uses a separate windowless runner.
 - **ThetaDesk.** A normal load fills lookup gaps. A retry can fill bars that
   arrived late while preserving the first stored bar. Today's bar can be
   saved from 6 p.m. ET when the provider returns it. Opening loaded tickers
@@ -34,29 +58,38 @@ and retry behavior.
   news**. Monday through Thursday after-close news goes to the next trading
   session. A quiet session needs a return, a qualifying check outside the
   weekend window, and no eligible article. **Study details** shows feed
-  success, failure, and skipped counts by calendar day. Date controls apply
-  to the chart and ticker detail. Weekly news and the full comparison table
-  have their own scope.
+  success, failure, and skipped counts by calendar day. The compact watchlist
+  switches tickers while keeping the selected period. Week navigation moves
+  the charts and news together. Longer presets show rolling ranges through
+  today in New York alongside current-week news. The full comparison table
+  uses the available sample. The first saved close starts each ticker's gap
+  checks and supplies the first comparison baseline.
+  **Data notes** breaks down saved live detections by ticker,
+  showing pending closes, price gaps, included articles, and weekend news.
 
-## Transfer a checkout
+## Before resetting or moving Windows
 
-1. Share the source and the intended `HoundDog/watch.toml` and
-   `bridge/bridge.toml` changes. Both TOML files are tracked and can be
-   edited by their dashboards. Review them for machine-specific paths and
-   private feed URLs before sharing.
-2. Rebuild on the destination from the [startup guide](README.md#start-on-windows).
-   Configure ThetaDesk credentials locally. Keep `.env`, `creds.txt`,
-   databases, exports, backups, and logs out of commits. Set up HoundDog's
-   background job on the destination if needed.
-3. For a study-only handoff, provide both export folders through the
-   appropriate private channel. Copy `bridge/bridge.toml` so the ticker
-   mappings travel with the data. Point its `[inputs]` at the export copies,
-   set both API URLs to an empty string, and start Bridge with `--config PATH`.
-4. For a full state move, stop the dashboards and background writers
-   before copying HoundDog's `watch.toml`, `watcher.db`, and `exports`, and
-   ThetaDesk's market store. Keep any SQLite journal files with the database
-   they belong to. HoundDog's JSON backup can transfer config and History
-   by itself. Copy its exports too when transferring research history.
+A regular restart uses the saved files in place. For **Reset this PC**,
+a reinstall, or a move, stop the dashboards and background writers for a
+consistent copy, then back up these locations to another drive:
+
+| What to copy | Location |
+| --- | --- |
+| Project and current edits | The checkout, including new files and both `HoundDog/watch.toml` and `bridge/bridge.toml`. |
+| HoundDog History, check log, and research archive | `HoundDog/watcher.db` with any SQLite sidecar files, plus `HoundDog/exports`. Copy `notification-status.json` if you want the most recent delivery result. |
+| ThetaDesk bars, pins, and research archive | `%LOCALAPPDATA%\ThetaDesk` including `market.db` and `exports`. Use the actual configured export/store folders if different. |
+| ThetaDesk credentials | `.env` and `creds.txt` beside the active executable or source app, if present. Keep this copy private. |
+
+For a full move, restore the data to those locations and rebuild from the
+[startup guide](README.md#start-on-windows). Configure credentials and
+HoundDog's scheduled job on the destination. For a study-only handoff,
+copy both export folders and `bridge/bridge.toml`. Point its `[inputs]`
+at the export copies, set both API URLs to an empty string, and start
+Bridge with `--config PATH`.
+
+The dashboards can edit both tracked TOML files. Review private feed URLs
+and machine-specific paths before sharing a checkout. Databases, exports,
+credentials, and local delivery results are kept out of commits.
 
 ## Verify the checkout
 
@@ -83,11 +116,13 @@ Pop-Location
 node --test HoundDog/tests/dashboard.test.js ThetaDesk/tests/dashboard.test.js
 ```
 
-The latest pass covered 131 HoundDog, 76 ThetaDesk, and 63 Bridge Python
-tests and 81 dashboard JavaScript tests. It also built both Windows
-packages, started all three apps on alternate ports, verified Bridge could
-read HoundDog topics and a ThetaDesk pin, and checked desktop and phone
-layouts in Edge.
+The Nov 23, 2026 handoff passed 135 HoundDog, 77 ThetaDesk, and 71 Bridge
+Python tests, plus 83 dashboard JavaScript tests. The current packages
+were built and launched locally. The notification check verified exactly
+one scheduled summary in Windows Notification Center using a test feed.
+The launcher check used a disposable listener for forced shutdown.
+Bridge's research feed was verified against saved exports, and the weekly
+workspace, range buttons, and shared pins were checked in the browser.
 
 ## Known limits
 

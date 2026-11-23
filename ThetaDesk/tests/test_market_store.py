@@ -118,9 +118,18 @@ class MarketStoreTests(unittest.TestCase):
         self.assertEqual(cached.data, result.data)
         self.assertEqual(cached.added, 0)
         self.assertEqual(provider.call_count, 3)
-        self.assertEqual(self.exported_bars(), result.data)
+        exported = self.exported_bars()
+        self.assertEqual([{key: value for key, value in row.items() if key != "recorded_at"} for row in exported],
+                         result.data)
+        coverage = self.exported_coverage()
+        lookup_by_end = {row["end_date"]: row["recorded_at"] for row in coverage}
+        for row in exported:
+            recorded = datetime.fromisoformat(row["recorded_at"])
+            self.assertEqual(recorded.utcoffset(), timezone.utc.utcoffset(recorded))
+            self.assertGreater(recorded, datetime.fromisoformat(row["start_at"]))
+            self.assertEqual(row["recorded_at"], lookup_by_end[row["session_date"]])
         self.assertTrue(all(b"\r" not in path.read_bytes() for path in self.exports()))
-        self.assertEqual(sorted((row["start_date"], row["end_date"]) for row in self.exported_coverage()),
+        self.assertEqual(sorted((row["start_date"], row["end_date"]) for row in coverage),
                          [("2024-01-02", "2024-01-02"), ("2024-01-03", "2024-01-04"),
                           ("2024-01-05", "2024-01-05")])
 
@@ -199,11 +208,18 @@ class MarketStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "interrupted append"):
                 self.fetch(JAN_3, JAN_3)
 
+        with closing(sqlite3.connect(self.directory / "market.db")) as connection:
+            queued = [json.loads(payload) for payload, in connection.execute("SELECT payload FROM export_outbox")]
+        [pending_bar] = [row for row in queued if row["schema"] == "theta.bar/1"]
+
         cached = self.fetch(JAN_2, JAN_3)
         self.assertEqual(cached.added, 0)
         self.assertEqual(provider.call_count, 2)
         self.assertTrue(path.read_bytes().startswith(original))
-        self.assertEqual(self.exported_bars(), cached.data)
+        exported = self.exported_bars()
+        self.assertEqual(exported[-1], pending_bar)
+        self.assertEqual([{key: value for key, value in row.items() if key != "recorded_at"} for row in exported],
+                         cached.data)
 
     @patch("market_store.fetch_stock_history")
     def test_concurrent_fetches_write_one_bar_and_export_record(self, provider):

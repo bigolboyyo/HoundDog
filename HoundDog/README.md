@@ -256,10 +256,9 @@ The dashboard provides:
   - Appearance: theme and light/dark mode
   - Display: UI size, and whether to load feed images
   - Checking: automatic checks (off, this dashboard tab, or the background job;
-    see Automatic checks above), and one desktop summary per dashboard
-    auto-check with new articles. The summary shows the match and article
-    counts, top topics, and any feed failures. The tab remembers which links
-    it has already shown, so repeated previews do not keep alerting
+    see Automatic checks above)
+  - Notifications: Windows delivery, a test, the latest delivery result, and
+    the browser's own notification setting
   - Feeds: request timeout, maximum feed size, user agent, and the maximum
     item age
   - Data: history retention, the event export for other programs (see Using
@@ -304,6 +303,34 @@ python watcher_server.py --port 8081
 
 Reload the dashboard to see matches and the latest check from a background run.
 
+### Windows notifications
+
+Open **Settings → Notifications** and select **Send test** to check delivery.
+The first send registers HoundDog as a sender for the current Windows account.
+HoundDog reports whether it found the test in Notification Center or submitted
+it to Windows. Use **Win+N** to see alerts when Windows mutes banners. **Check
+status** reports Windows notification blocks and the latest HoundDog result.
+
+Enable **Send Windows notifications** and save. The Windows job and dashboard
+automatic checks that save matches use the same preferences in `watch.toml`.
+Each qualifying check sends one summary with distinct article and match
+counts, top topics, and a feed failure count when applicable. Use the minimum
+article count to reduce noise. Manual saved checks and backfill are opt-in.
+Previews stay outside Windows delivery. Turn off the banner for Notification
+Center only, and turn off sound for quiet delivery. Windows manages Do Not
+Disturb and any per-sender restrictions.
+
+Browser alerts are a separate per-browser option. They run when this tab
+performs an automatic check and Windows delivery is off. The tab remembers
+which links it has already announced.
+
+The Windows preferences are saved in `watch.toml`. The latest attempt,
+test, or skip reason is saved as `notification-status.json` beside
+`watcher.db`. A regular reboot keeps these files. For a Windows reinstall
+or another PC, back up the database and the export folder and configure
+the saved-check task for the new Windows account. See the
+[handoff data locations](../PLAN.md#before-resetting-or-moving-windows).
+
 NES.css is loaded from its pinned 2.3.0 CDN release. The NES theme is offered
 only when the stylesheet loads successfully; if it is unavailable, the option
 stays hidden and any saved NES selection falls back to Pico. Its rules,
@@ -324,9 +351,11 @@ and reports JSON errors with an `error` field.
 | Method and path | Behavior |
 | --- | --- |
 | `GET /api/dashboard` | Settings, feeds, topics, and the full History, including read and starred state. |
+| `GET /api/topics` | Configured topics and their matching rules, without loading History. |
 | `POST /api/check` | Check the configured feeds. Pass `dry_run: true` for a preview. Both modes log the check, but only a saved check adds History and event exports. |
 | `POST /api/topic-test` | Test `keywords` and optional `exclude` against the `latest` or `history` corpus. For `latest`, `refresh: true` fetches fresh items for the tester. |
 | `GET /api/health`, `GET /api/activity` | Feed health and the most recent logged checks. |
+| `GET /api/notifications`, `POST /api/notifications/test` | Windows notification availability and latest result, or send one test using saved banner and sound preferences. |
 | `POST /api/feeds`, `POST /api/topics` | Append a feed or a topic. Duplicate topic names return HTTP 409. |
 | `PUT` or `DELETE /api/feeds/{position}` or `/api/topics/{position}` | Edit or remove a zero-based entry. Send `expected`: the entry as you last read it from `/api/dashboard`. If any editable field differs now (another tab saved first, or the list shifted), the change is refused with HTTP 409. |
 | `PUT /api/settings`, `PUT /api/items/state` | Update watcher settings, or set read or starred flags for the supplied article `links`. |
