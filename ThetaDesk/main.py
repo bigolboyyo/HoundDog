@@ -42,7 +42,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    # The SDK logs its authentication response, including the session ID, at INFO.
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     args = _build_parser().parse_args(argv)
 
     try:

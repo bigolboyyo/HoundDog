@@ -8,6 +8,7 @@ variables, so nothing from a request is ever spliced into a command.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import os
@@ -22,6 +23,8 @@ from xml.sax.saxutils import escape
 
 TASK_PATH = "\\HoundDog\\"
 TASK_NAME = "Saved check"
+WINDOWLESS_RUNNER = "HoundDogScheduled.exe"
+LEGACY_ARGUMENTS = "watch --scheduled"
 JOB_INTERVALS = (5, 15, 30, 60, 120, 240, 720, 1440)
 POWERSHELL_TIMEOUT_SECONDS = 60
 # A check is bounded by its fetch deadlines; this only stops a hung process.
@@ -83,6 +86,7 @@ class JobStatus:
     runs_this_folder: bool = False
     command_found: bool = False
     command: str = ""
+    opens_console: bool = False
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -121,7 +125,7 @@ def task_xml(options: JobOptions, command: str, arguments: str, working_director
         "start": start.strftime("%Y-%m-%dT%H:%M:%S"),
         "limit": EXECUTION_LIMIT,
         "command": escape(command),
-        "arguments": escape(arguments),
+        "arguments": f"      <Arguments>{escape(arguments)}</Arguments>\n" if arguments else "",
         "directory": escape(working_directory),
         "minutes": options.interval_minutes,
         "battery": xml_bool(not options.run_on_battery),
@@ -171,8 +175,7 @@ def task_xml(options: JobOptions, command: str, arguments: str, working_director
   <Actions Context="Author">
     <Exec>
       <Command>{command}</Command>
-      <Arguments>{arguments}</Arguments>
-      <WorkingDirectory>{directory}</WorkingDirectory>
+{arguments}      <WorkingDirectory>{directory}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>
@@ -218,6 +221,16 @@ $trigger = $task.Triggers | Select-Object -First 1
 INSTALL_SCRIPT = powershell_script(r"""
 Register-ScheduledTask -TaskPath $env:HOUNDDOG_TASK_PATH -TaskName $env:HOUNDDOG_TASK_NAME -Xml $env:HOUNDDOG_TASK_XML -Force | Out-Null
 """)
+UPGRADE_SCRIPT = powershell_script(r"""
+$task = Get-ScheduledTask -TaskPath $env:HOUNDDOG_TASK_PATH -TaskName $env:HOUNDDOG_TASK_NAME -ErrorAction SilentlyContinue
+if (-not $task -or @($task.Actions).Count -ne 1) { return }
+$old = $task.Actions[0]
+if ($old.Execute -ne $env:HOUNDDOG_OLD_COMMAND -or $old.Arguments -ne $env:HOUNDDOG_OLD_ARGUMENTS -or
+    $old.WorkingDirectory -ne $env:HOUNDDOG_WORKING_DIRECTORY) { return }
+$action = New-ScheduledTaskAction -Execute $env:HOUNDDOG_NEW_COMMAND -WorkingDirectory $old.WorkingDirectory
+Set-ScheduledTask -TaskPath $env:HOUNDDOG_TASK_PATH -TaskName $env:HOUNDDOG_TASK_NAME -Action $action | Out-Null
+'updated'
+""")
 RUN_SCRIPT = powershell_script(r"""
 Start-ScheduledTask -TaskPath $env:HOUNDDOG_TASK_PATH -TaskName $env:HOUNDDOG_TASK_NAME
 """)
@@ -242,12 +255,14 @@ class TaskScheduler:
         self._run = run
         self.supported = supported
         self._source_arguments = f'"{root / "watcher.py"}" --scheduled'
-        self._command = executable if frozen else python_for_jobs(executable)
-        self._arguments = "watch --scheduled" if frozen else self._source_arguments
+        self._windowless = root / WINDOWLESS_RUNNER
+        self._frozen = frozen
+        self._command = str(self._windowless) if frozen else python_for_jobs(executable)
+        self._arguments = "" if frozen else self._source_arguments
 
     @property
     def command_line(self) -> str:
-        return f'"{self._command}" {self._arguments}'
+        return f'"{self._command}" {self._arguments}'.rstrip()
 
     def status(self) -> JobStatus:
         if not self.supported:
@@ -259,18 +274,15 @@ class TaskScheduler:
         if not found.get("installed"):
             return JobStatus(supported=True, installed=False, command=self.command_line)
         execute = str(found.get("execute") or "")
-        arguments = found.get("arguments")
-        runs_this_folder = (execute, arguments) == (self._command, self._arguments)
-        if execute and not runs_this_folder:
-            # A job installed by either entry point still works with the
-            # other when both are alongside the same watch.toml.
-            program = Path(execute)
-            runs_this_folder = (
-                arguments == self._source_arguments
-                and program.name.lower() in {"python.exe", "pythonw.exe"}
-            ) or (
-                arguments == "watch --scheduled" and program == self._root / "HoundDog.exe"
-            )
+        arguments = str(found.get("arguments") or "")
+        program = Path(execute)
+        legacy = program == self._root / "HoundDog.exe" and arguments == LEGACY_ARGUMENTS
+        source = arguments == self._source_arguments and program.name.lower() in {"python.exe", "pythonw.exe"}
+        # Either dashboard can manage a job that uses the same watch.toml.
+        runs_this_folder = (
+            (execute, arguments) == (self._command, self._arguments)
+            or source or legacy or (program == self._windowless and not arguments)
+        )
         return JobStatus(
             supported=True,
             installed=True,
@@ -281,7 +293,8 @@ class TaskScheduler:
             last_result=found.get("last_result"),
             runs_this_folder=runs_this_folder,
             command_found=bool(execute) and Path(execute).is_file(),
-            command=f'"{execute}" {found.get("arguments", "")}'.strip(),
+            command=f'"{execute}" {arguments}'.rstrip(),
+            opens_console=legacy or (source and program.name.lower() == "python.exe"),
         )
 
     @staticmethod
@@ -302,11 +315,28 @@ class TaskScheduler:
         """Create the task, or replace it: new options, enabled, this folder,
         and the Python running this server."""
         self._require_support()
+        if self._frozen:
+            self._require_windowless_runner()
         # First run a minute from now, on the minute, so later runs line up.
         start = (now or datetime.now()).replace(second=0, microsecond=0) + timedelta(minutes=1)
         xml = task_xml(options, self._command, self._arguments, str(self._root), start)
         self._powershell(INSTALL_SCRIPT, {"HOUNDDOG_TASK_XML": xml})
         return self.status()
+
+    def upgrade_windowless(self) -> bool:
+        """Change only the action of an existing legacy task for this checkout."""
+        self._require_support()
+        self._require_windowless_runner()
+        return self._powershell(UPGRADE_SCRIPT, {
+            "HOUNDDOG_OLD_COMMAND": str(self._root / "HoundDog.exe"),
+            "HOUNDDOG_OLD_ARGUMENTS": LEGACY_ARGUMENTS,
+            "HOUNDDOG_WORKING_DIRECTORY": str(self._root),
+            "HOUNDDOG_NEW_COMMAND": str(self._windowless),
+        }) == "updated"
+
+    def _require_windowless_runner(self) -> None:
+        if not self._windowless.is_file():
+            raise ScheduleError(f"Missing {WINDOWLESS_RUNNER} beside HoundDog.exe. Rebuild HoundDog.")
 
     def run_now(self) -> JobStatus:
         self._require_support()
@@ -348,3 +378,14 @@ class TaskScheduler:
             first_line = next((line for line in stderr.splitlines() if line.strip()), "")
             raise ScheduleError(first_line or f"PowerShell exited with code {completed.returncode}")
         return stdout
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Upgrade the installed background task to HoundDog's windowless runner.")
+    parser.add_argument("--upgrade-windowless", action="store_true", required=True)
+    parser.parse_args()
+    try:
+        if TaskScheduler(Path(__file__).resolve().parent).upgrade_windowless():
+            print("Updated the installed HoundDog task to run without a console window.")
+    except ScheduleError as error:
+        raise SystemExit(str(error)) from error

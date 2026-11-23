@@ -4,6 +4,9 @@
 # [inputs] thetadesk_exports empty: ThetaDesk's store, %LOCALAPPDATA%\ThetaDesk\exports
 # [[symbols]]: a ticker and the HoundDog topics that count as news about it.
 # [[groups]]: a named set of tickers, studied together.
+# [hounddog] url = "" turns off the HoundDog connection (watching tickers).
+# [thetadesk] url = "" turns off price loading and pins.
+# [display] banner: a line shown across the top of the dashboard.
 
 [inputs]
 hounddog_exports = "../HoundDog/exports"
@@ -20,6 +23,22 @@ topics = ["MSFT"]
 [[symbols]]
 symbol = "TSLA"
 topics = ["TSLA"]
+
+[[symbols]]
+symbol = "NVDA"
+topics = ["NVDA"]
+
+[[symbols]]
+symbol = "GOOGL"
+topics = ["GOOGL"]
+
+[[symbols]]
+symbol = "AMZN"
+topics = ["AMZN"]
+
+[[symbols]]
+symbol = "META"
+topics = ["META"]
 
 [[groups]]
 name = "Tech Bros"

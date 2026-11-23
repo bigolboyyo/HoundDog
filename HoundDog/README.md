@@ -159,8 +159,9 @@ own auto-checks stay paused. Choosing another option removes the task.
 
 The background job:
 
-- runs `watcher.py --scheduled` with `pythonw.exe`, so no window opens, as you,
-  while you are signed in to Windows (a locked screen is fine). A run never
+- runs under your Windows account while you are signed in (a locked screen
+  is fine). The packaged app uses `HoundDogScheduled.exe` to run without a
+  console. Source installs use `pythonw.exe` when available. A run never
   starts while the previous one is still going.
 - has three settings: Run on battery, Catch up on a missed check after sleep or
   shutdown, and Only when connected to a network. All are on by default.
@@ -176,8 +177,8 @@ The background job:
   under "Messages from background runs", and Clear messages empties it. Runs
   without problems add nothing.
 
-`python watcher.py --scheduled` is what the task runs: one saved check, logged
-as a background job. It cannot be combined with `--dry-run` or `--interval`.
+`python watcher.py --scheduled` runs the same saved check and logs it as a
+background job. It cannot be combined with `--dry-run` or `--interval`.
 Its exit code is the task's last result: 0 for success, 1 when every feed
 failed, 2 for a configuration error, and 3 for an unexpected error.
 
@@ -200,11 +201,13 @@ open **Shut down** in the left toolbar and confirm, or press Ctrl+C in its
 console. A running feed check can finish before the dashboard exits. The
 background job is separate and keeps running.
 
-Run `.\build_exe.ps1` from this folder to build or update the executable.
-The packaging dependencies live in `.venv-build`. A rebuild replaces the
-executable and preserves the app data. Use `.\HoundDog.exe watch --help` for
-the bundled watcher CLI. Scheduled checks installed from the executable can
-briefly open a console window.
+Shut down the dashboard before running `.\build_exe.ps1` from this folder
+to build or update the app. Keep
+`HoundDogScheduled.exe` alongside `HoundDog.exe` for the scheduled job.
+The packaging dependencies live in `.venv-build`. A rebuild preserves
+app data and switches a legacy task for this checkout to the windowless
+runner without changing its schedule or settings. Use `.\HoundDog.exe watch --help`
+for the bundled watcher CLI.
 
 ### Run from source
 
@@ -244,8 +247,9 @@ The dashboard provides:
   - Appearance: theme and light/dark mode
   - Display: UI size, and whether to load feed images
   - Checking: automatic checks (off, this dashboard tab, or the background job;
-    see Automatic checks above), and desktop notifications for new matches the
-    dashboard tab's auto-check finds
+    see Automatic checks above), and one desktop summary per dashboard
+    auto-check with new matches. The summary shows the match and article
+    counts, top topics, and any feed failures
   - Feeds: request timeout, maximum feed size, user agent, and the maximum
     item age
   - Data: history retention, the event export for other programs (see Using

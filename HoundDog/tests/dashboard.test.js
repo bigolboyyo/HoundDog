@@ -830,7 +830,42 @@ test("auto-check with Check & save saves, and notifies each article only once", 
   const checks = elements.get("requests").filter((request) => request.path === "/api/check");
   assert.equal(checks.length, 2);
   assert.deepEqual(JSON.parse(checks[0].body), { dry_run: false, trigger: "auto" });
-  assert.deepEqual(shown, [{ title: "HoundDog", body: "Agent news", tag: "hounddog-new-matches" }]);
+  assert.deepEqual(shown, [{
+    title: "HoundDog",
+    body: "2 new matches · 1 article\nAI tooling 1, Breaking 1",
+    tag: "hounddog-new-matches",
+  }]);
+});
+
+test("4,000 matches produce one desktop summary with counts by topic", async () => {
+  const shown = [];
+  class FakeNotification {
+    static permission = "granted";
+    constructor(title, options) {
+      shown.push({ title, ...options });
+    }
+  }
+  const matches = Array.from({ length: 4_000 }, (_, index) => ({
+    topic: index < 2_600 ? "TSLA" : "NVDA",
+    keywords: [],
+    item: { source: "Feed", title: "Article", link: `https://example.com/${index % 3_000}` },
+  }));
+  const elements = await loadDashboard({
+    notification: FakeNotification,
+    storedPreferences: { "auto-check-interval": "5", notifications: "true" },
+    checkResult: { matches, failed_sources: ["Offline feed"] },
+  });
+  const timer = elements.get("timers").find((pending) => pending.delay === 5 * 60_000 && !pending.cleared);
+  timer.callback();
+  await settle();
+
+  const format = new Intl.NumberFormat();
+  assert.deepEqual(shown, [{
+    title: "HoundDog",
+    body: `${format.format(4_000)} new matches · ${format.format(3_000)} articles\n` +
+      `TSLA ${format.format(2_600)}, NVDA ${format.format(1_400)}\n1 feed failed`,
+    tag: "hounddog-new-matches",
+  }]);
 });
 
 test("notifications stay off when the browser refuses permission", async () => {
@@ -847,6 +882,36 @@ test("notifications stay off when the browser refuses permission", async () => {
   assert.equal(toggle.checked, false);
   assert.match(elements.get("#notice").textContent, /blocked/);
   assert.equal(elements.get("storage").get("keyword-watcher-notifications"), "false");
+});
+
+test("a failed desktop notification preserves the saved check and refreshes the inbox", async () => {
+  class UnavailableNotification {
+    static permission = "granted";
+    constructor() {
+      throw new TypeError("Desktop notifications are unavailable");
+    }
+  }
+  const elements = await loadDashboard({
+    notification: UnavailableNotification,
+    storedPreferences: { "auto-check-interval": "5", "auto-check-action": "save", notifications: "true" },
+    checkResult: {
+      matches: [{
+        topic: "AAPL", keywords: ["Apple"],
+        item: { source: "Feed", title: "Apple news", link: "https://example.com/apple" },
+      }],
+      failed_sources: [],
+    },
+  });
+  const timer = elements.get("timers").find((pending) => pending.delay === 5 * 60_000 && !pending.cleared);
+  const countRefreshes = () => elements.get("requests").filter(({ path }) => path === "/api/dashboard").length;
+  const before = countRefreshes();
+  timer.callback();
+  await settle();
+
+  assert.equal(countRefreshes(), before + 1);
+  assert.match(elements.get("#notice").textContent, /Saved to History.*could not show a desktop notification/);
+  assert.match(elements.get("#check-status").textContent, /Checked .*1 new/);
+  assert.equal(elements.get("#notify-new-matches").checked, false);
 });
 
 test("shared settings forms load from the server and save only their own fields", async () => {

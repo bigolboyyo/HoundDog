@@ -52,6 +52,19 @@ class NyseCalendarTests(unittest.TestCase):
             with self.subTest(moment=moment):
                 self.assertEqual(self.calendar.latest_closed_session(datetime.fromisoformat(moment)), day)
 
+    def test_weekend_window_starts_at_the_actual_friday_close(self):
+        for moment, expected in (
+            ("2026-11-20T20:59:00+00:00", False),
+            ("2026-11-20T21:00:00+00:00", True),
+            ("2026-11-23T04:59:00+00:00", True),
+            ("2026-11-23T05:00:00+00:00", False),
+            ("2026-11-27T17:59:00+00:00", False),
+            ("2026-11-27T18:00:00+00:00", True),
+            ("2026-07-03T20:00:00+00:00", True),
+        ):
+            with self.subTest(moment):
+                self.assertEqual(self.calendar.is_weekend_window(datetime.fromisoformat(moment)), expected)
+
     def test_news_belongs_to_the_session_whose_close_follows_it(self):
         cases = {
             "2026-11-16T14:00:00+00:00": date(2026, 11, 16),  # Monday 09:00 ET, pre-market

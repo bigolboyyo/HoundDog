@@ -68,13 +68,14 @@ class MakeDemoTests(unittest.TestCase):
     def test_backfill_and_a_repeat_detection_are_in_the_data_and_left_out_of_the_study(self):
         self.make()
 
-        records = [json.loads(line) for line in (self.out / "exports" / "hounddog-demo.jsonl").open()]
+        export = self.out / "exports" / "hounddog-demo.jsonl"
+        records = [json.loads(line) for line in export.read_text(encoding="utf-8").splitlines()]
         events = [record for record in records if record["schema"] == "hounddog.event/1"]
         live_ids = [record["event_id"] for record in events if not record["backfill"]]
         report = Overview(BridgeConfig.load(self.out / "demo.toml")).report()
         self.assertTrue(any(record["backfill"] for record in events))
         self.assertEqual(len(live_ids) - len(set(live_ids)), 1, "one article is detected twice")
-        self.assertEqual(sum(len(study.events) for study in report.symbols), len(set(live_ids)))
+        self.assertEqual(sum(len(study.events) + len(study.weekend_events) for study in report.symbols), len(set(live_ids)))
 
     def test_the_same_seed_makes_the_same_demo(self):
         self.make("--seed", "3")

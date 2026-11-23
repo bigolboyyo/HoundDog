@@ -20,6 +20,7 @@ bridge/demo/
 build/
 dist/
 HoundDog/HoundDog.exe
+HoundDog/HoundDogScheduled.exe
 *.spec
 
 # Python

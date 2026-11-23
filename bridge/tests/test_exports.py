@@ -95,6 +95,21 @@ class ReadMarketTests(unittest.TestCase):
         self.assertEqual(market.bars, ())
         self.assertEqual(market.report.skipped["malformed theta.bar/1"], 1)
 
+    def test_non_finite_prices_do_not_hide_valid_bars(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            valid = bar("AAPL", date(2026, 11, 16), 100.0)
+            write_lines(folder / "theta-bars-2026-11-22.jsonl", [
+                {**valid, "close": "NaN"},
+                {**valid, "open": float("inf")},
+                {**valid, "high": 10**400},
+                valid,
+            ])
+
+            market = read_market(folder)
+            self.assertEqual([row.close for row in market.bars], [100.0])
+            self.assertEqual(market.report.skipped["malformed theta.bar/1"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

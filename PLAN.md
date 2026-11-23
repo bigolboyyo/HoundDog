@@ -1,222 +1,89 @@
 # theta_hound handoff
 
-This handoff covers current dashboard behavior and the open review findings
-from November 22, 2026.
+Current behavior and open issues from the November 22, 2026 review.
+The [workspace README](README.md) covers setup, startup, builds, and shutdown.
 
-## What is running
+## What runs where
 
-| Component | Startup and ownership |
+| App | Startup and ownership |
 | --- | --- |
-| HoundDog | The launcher runs `HoundDog/HoundDog.exe` on 8080. The source server is `HoundDog/watcher_server.py`. Both use the configuration, SQLite database, and news exports beside the running app. A Windows scheduled task can save checks separately. |
-| ThetaDesk | The launcher runs `ThetaDesk/dist/ThetaDesk/ThetaDesk.exe` on 8000 with the Terminal prompt disabled. The source wrapper starts `api.py` in its venv. Both use the same market database and export directory in `%LOCALAPPDATA%/ThetaDesk`. Each start reads credentials from its own app directory. |
-| Bridge | The launcher runs `bridge/server.py` on 8090. It rereads both exports for its CLI and dashboard and writes its own ticker mappings. It uses HoundDog's API to add topics. |
+| [HoundDog](HoundDog/README.md) | The launcher opens `HoundDog/HoundDog.exe` on 8080. The source server is `HoundDog/watcher_server.py`. The app and the scheduled job use the config, History database, and news exports beside the executable or source. |
+| [ThetaDesk](ThetaDesk/README.md) | The launcher opens `ThetaDesk/dist/ThetaDesk/ThetaDesk.exe` on 8000. The source wrapper prepares a venv and starts `api.py`. Source and package share the database, pins, and exports in `%LOCALAPPDATA%/ThetaDesk`. Each reads credentials from its own app directory. |
+| [Bridge](bridge/README.md) | The launcher runs `bridge/server.py` on 8090. Bridge reads both export directories. It adds topics through HoundDog's API and loads bars and shares pins through ThetaDesk's API. The study works from saved exports with both producers stopped. |
 
-Use the [workspace startup guide](README.md) for launch, rebuild, and shutdown.
-The app guides document their endpoints and storage.
-[HoundDog](HoundDog/README.md), [ThetaDesk](ThetaDesk/README.md), [Bridge](bridge/README.md)
+`build.bat --no-pause` builds both Windows packages and returns a nonzero
+status if either build fails. Shut down their running dashboards before
+replacing the installed executables. Bridge runs from source. The packaged
+HoundDog task uses `HoundDogScheduled.exe` and continues independently of
+the dashboard. A build can upgrade the old task's executable for the same
+checkout while preserving the task's settings and triggers.
 
-## Current behavior and data
+## Data and dashboard behavior
 
-- HoundDog saves History, check logs, and export queue entries in one SQLite
-  transaction. Clearing History invalidates overlapping checks and preserves
-  the research exports. Dashboard previews can record check activity and
-  backoff without saving new History. [Export contract](HoundDog/INTEGRATION.md)
-- ThetaDesk normalizes daily bars from the SDK and the optional Terminal REST
-  fallback. Normal loads fill lookup gaps. Refresh can add missing bars, and
-  stored bars retain their original values. Loaded tickers and fixed-range
-  pins use local data. Pins are outside the integration exports.
-- Bridge groups eligible articles by NYSE session using first detection time.
-  A quiet session needs both a return and a qualifying HoundDog check. The CLI
-  and dashboard use the same report. The dashboard shows session counts,
-  reasons, article placement and exclusions, and a short verdict per ticker.
-- Bridge's watchlist can now load or update prices through ThetaDesk. The
-  chart opens session evidence from news markers and a coverage strip. Date
-  ranges can be saved and reopened through ThetaDesk's shared pins.
-- The live export snapshot had 251 daily bars each for AAPL, MSFT, and TSLA
-  through November 20. Each ticker had 250 calculable returns and zero news
-  or quiet sessions. HoundDog started watching the ticker topics after the
-  last stored close. The sample needs overlapping price data and live checks.
-  The demo is available for inspecting a populated report.
+- HoundDog commits saved History rows, the check log, and export queue
+  entries in one SQLite transaction. A History clear invalidates checks
+  already in progress and keeps existing research exports. Preview checks
+  can affect feed backoff and activity without saving new matches. Dashboard
+  auto-check sends at most one desktop notification per run with new
+  articles, with counts for topic matches and distinct articles.
+  [Export contract](HoundDog/INTEGRATION.md)
+- ThetaDesk caches lookups and preserves the original value of a stored bar.
+  Today's bar is eligible to be stored from 6 p.m. ET. Stored bars and
+  shared pins open locally. Pin changes stay in the database.
+  [Market storage](ThetaDesk/README.md#store-and-export-daily-bars)
+- Bridge's weekly news shows live detections before prices arrive. Friday
+  at or after the NYSE close through Sunday appears under **Full week** in
+  **Weekend news**. Monday through Thursday after-close detections belong
+  to the next trading session. Quiet sessions need a calculable move and
+  a successful feed read from a check watching the ticker outside the
+  weekend window. The activity strip shows weekend checks too, on their
+  New York calendar dates, with success and failure proportions.
+  [Study rules](bridge/README.md#what-the-report-means)
+- Ticker cards can load about a year of prices and fetch missing recent
+  sessions. A daily bar that's still pending keeps the normal incremental
+  update available. The chosen date range applies to the chart and ticker
+  detail. Weekly news navigates by detection week and the main summary uses
+  the full saved sample. Chart markers open the corresponding session and
+  its articles. Shared pins save and restore fixed date ranges.
+  [Dashboard](bridge/README.md#dashboard)
+- `HoundDog/watch.toml` and `bridge/bridge.toml` are tracked settings that
+  the dashboards can modify. The current working copy includes HoundDog's
+  expanded feed and topic lists and Bridge's expanded ticker mappings.
+  Databases, exports, build outputs, logs, and credentials stay local.
 
-## Review findings
+## Open issues and operational limits
 
-1. **ThetaDesk credentials can be sent to an allowed CORS origin. Fixed
-   (evening):** the credential GET and PUT refuse other origins, and CORS
-   allows none by default (`FRONTEND_ORIGIN` is empty). Verified in Chrome:
-   before, a page on `localhost:3000` read the API key; now it is blocked.
-   The GET now reports only what is saved (and the email address), never the
-   key or password; on save a blank field keeps the saved value, and
-   `clear_api_key` / `clear_credentials` remove them. Still open: the raw
-   CLI's INFO logging. Originally: the
-   credentials GET returns the API key and password. CORS allows configured
-   origins for GET, including the default development origin, and the
-   credential route checks the network peer without checking Origin.
-   Prefer configuration status in the response, explicit keep and clear
-   operations on save, and same-origin checks for settings. The raw CLI also
-   enables INFO logging, where the installed SDK logs the authentication
-   response, including the session identifier.
-   [API implementation](ThetaDesk/api.py), [Raw CLI](ThetaDesk/main.py)
-2. **ThetaDesk's source wrapper can terminate a working API on Ctrl+C. Fixed
-   (evening):** on Ctrl+C the wrapper waits up to 60 seconds for the API to
-   finish and exit; a second Ctrl+C stops it at once. Originally: the
-   parent immediately calls `terminate()` on a running child from
-   `finally`. A check with a fake child confirmed that path. Give the API time
-   to finish after the console interrupt before terminating it. The dashboard
-   shutdown endpoint separately passed its graceful shutdown smoke test.
-   [Startup implementation](ThetaDesk/start_project.py)
-3. **HoundDog's executable predates the latest shutdown source. Body read
-   fixed (evening):** each socket read or write now times out after 15
-   seconds, so a stalled body ends after that instead of holding up shutdown
-   (verified: still running after 25 seconds before, exited after 15 after).
-   Rebuild the executable to include it. Originally: the existing
-   binary starts and shuts down during an ordinary smoke test. Its build time
-   is earlier than the request-tracking changes in the worktree. Rebuild and
-   retest the package before relying on the current shutdown behavior there.
-   Separately, current source counts a request before reading its body, and
-   the body read has no socket timeout. A client that stops sending can leave
-   shutdown waiting. Bound the read while preserving valid in-progress work.
-   [Server implementation](HoundDog/watcher_server.py)
-4. **ThetaDesk can show a ticker different from the current form selection.
-   Fixed (evening):** both paths take a lookup number, and only the most
-   recent may draw the result; a test holds a late answer back. Originally:
-   verified with a delayed history response and a more recent **Loaded tickers**
-   selection. Both paths write the same result panel, so a late response can
-   replace the newer choice. Track the most recent lookup across both paths.
-   [Dashboard implementation](ThetaDesk/frontend/app.js)
-5. **HoundDog accepts stale edits to the same topic or feed. Fixed
-   (evening):** `expected` is compared on every editable field
-   (`ConfigList.fields`), so a save or delete from a tab that missed another
-   tab's change gets 409 and the page reloads the list. Originally: verified with
-   two ordinary topic edits based on the same input snapshot. The second
-   save overwrote the first. The existing guard checks the topic name, or the
-   feed name and URL. It catches shifted list entries but misses edits to
-   keywords, excludes, and feed intervals. Compare the editable snapshot or
-   add a revision check.
-   [Server implementation](HoundDog/watcher_server.py)
-6. **ThetaDesk's source version check is weaker than its dependency floor.
-   Fixed (evening):** `start_project.py` requires 3.12, matching thetadata
-   1.0.18's `Requires-Python`. Originally: `start_project.py` accepts Python 3.10. Installed package metadata for
-   the pinned SDK requires 3.12. The setup guide now states the effective
-   minimum. Align the early check and its message with that minimum.
-   [Startup implementation](ThetaDesk/start_project.py)
-7. **Simultaneous ThetaDesk fetches can spend provider quota twice.** The
-   existing concurrency test forces two provider calls and confirms that
-   the store and export still keep one bar. Coalescing requests in one API
-   process would save quota. The CLI and API currently have independent
-   in-memory rate limits.
-   [Store concurrency test](ThetaDesk/tests/test_market_store.py)
-8. **The chooser checks launch prerequisites but not server readiness.** A
-   successful spawn closes the chooser. If a child exits during startup,
-   the visible console or hidden log carries the error.
-   [Launcher](launch.py)
-9. **ThetaDesk credential updates can partly succeed. Partly fixed
-   (evening):** saves now hold one lock and replace `creds.txt` atomically;
-   the key and the account are still two files. Originally: the key and password
-   files are updated separately without a lock across requests. A failure
-   during the second write can leave a new key with old password credentials.
-   The SDK's default email/password lookup also follows the caller's working
-   directory. Keep credential ownership tied to the active app.
-   [Credentials](ThetaDesk/api.py), [SDK setup](ThetaDesk/theta_data.py)
+| Item | Current behavior |
+| --- | --- |
+| Provider quota | Simultaneous ThetaDesk lookups for the same gap can each call the provider. CLI and API rate limits are independent. The store deduplicates the resulting bars. |
+| Partial ThetaDesk fetch | A request can save earlier ranges before a later range fails. A normal retry picks up the remaining gaps. A blocked export can delay later fetches even though committed bars remain readable. |
+| Credentials and restore | ThetaDesk serializes credential saves and replaces each file atomically. Changes to the key and the account still span two files. HoundDog's combined restore can commit History before a config write fails. Retrying merges History without duplicating it. |
+| Launcher readiness | The chooser checks prerequisites and port availability, then starts the processes. A later startup failure is reported in the console or `logs/<app>.log`. |
+| External feeds | Some feeds intermittently fail or rate-limit checks. HoundDog's Health panel shows feed outcomes and backoff. Bridge's activity graph shows successful attempts, failures, and skipped feeds separately. |
+| Study sample | A comparison needs enough overlapping live news, quiet checks, and saved prices. Use the [demo](bridge/README.md#demo) for a populated example. The comparison describes the sample and supports no conclusion about causation or timing within the day. |
 
-**Fixed (evening):** impossible bars (a price of zero or less, or an open or
-close outside the low-to-high range) are refused, and today's bar is stored
-only from 18:00 New York time, after the end-of-day report should be final.
-Stored bars still never change. Originally: ThetaDesk normalizes types and
-dates but accepts inconsistent OHLC values.
-A fixture with a high below the low passed normalization. The store keeps
-the first value for each bar key, so a bad or provisional value cannot be
-replaced with refresh. Historical empty answers also count as completed
-lookups. Validate price bounds and establish a correction policy before
-depending on refresh for data repair. Provider timing and correction
-behavior were outside this review. [Market store](ThetaDesk/market_store.py)
+## Pre-commit verification
 
-## Follow-up review of failures and retries
-
-1. **HoundDog can reject a backup it exported. Fixed (evening):** import
-   has no per-field or per-row limit, and export and import share one 1 GiB
-   size limit, so export refuses a backup import could not accept. A test
-   round-trips a 21,012-character summary. Originally: a saved feed summary of
-   21,012 characters exported normally, then failed History import because
-   the importer caps each field at 20,000 characters. Export also has no
-   matching 25 MiB or 100,000-row cap. The restore path needs to accept the
-   data the app itself can save, or the export must produce restorable parts.
-   [Backup and restore](HoundDog/watcher_server.py)
-2. **Bridge could replace valid settings with unreadable TOML (fixed).** A configuration
-   with a quoted custom table name and key loaded correctly. Adding a ticker
-   reported success, then the next load failed because the writer emitted the
-   name and key without quotes. The writer now quotes these keys and parses
-   the rendered config before replacing the file.
-   [Bridge config writer](bridge/config.py)
-3. **ThetaDesk can save bars before returning an error.** When a later range
-   was rate limited, the first gap stayed committed and a normal retry fetched
-   only the remaining gap. A separate test found that a blocked export left
-   its committed bar available for local reads but stopped a later fetch for
-   another ticker before it reached the provider. Decide whether storing bars
-   should depend on export availability and report saved progress explicitly.
-   [ThetaDesk fetch and export](ThetaDesk/market_store.py)
-4. **Bridge cleared the retry form after a partial watch result (fixed).** In a
-   two-ticker fixture, the server reported one success and one failure.
-   The dashboard displayed both results and cleared the failed ticker's
-   selection, keywords, and group. Failed entries now stay selected for retry.
-   [Bridge watch form](bridge/static/app.js)
-
-HoundDog's combined restore also has two commit steps. An injected config
-write failure left History merged, and retrying restored the config without
-duplicating History. The guides now describe these partial outcomes.
-
-## Verification
-
-- Evening passes: 130 HoundDog, 74 ThetaDesk, and 57 Bridge Python tests,
-  plus 69 HoundDog and 10 ThetaDesk dashboard tests, all pass; pyflakes is
-  clean. Each fix above has a test that fails without it. Chrome checks:
-  ThetaDesk Settings sends no secret and keeps blanks; a stale HoundDog tab's
-  save gets 409 and the first tab's change stays.
-- The Bridge dashboard update passed all 57 Bridge tests and an isolated
-  Edge workflow using ThetaDesk's real API and a fixture provider. It
-  covered price updates, rate-limit retry, session evidence, shared pins,
-  and layout at 360 px.
-- Passed 125 HoundDog, 63 ThetaDesk, and 54 Bridge Python tests, plus 76
-  dashboard JavaScript tests during the earlier review. The HTTP tests used
-  local loopback access.
-- Isolated copies of HoundDog source and the existing executable served
-  dashboard endpoints and exited through the shutdown endpoint. ThetaDesk's
-  direct API and source wrapper did the same, including a pin round trip
-  against a temporary store. The wrapper used the preinstalled environment
-  and an alternate port. Bridge likewise served its overview and shut down.
-- With fixture feeds and bars, the actual producer save and export paths
-  yielded one news session and two quiet sessions in Bridge. The initial
-  backfill was excluded.
-- The launcher started an isolated Bridge instance with no console, captured
-  its output, and refused a second start once the port was occupied.
-- The running ThetaDesk executable on 8000 served matching frontend assets
-  and exposed the expected stored bars, pins, and shutdown routes. Port 8000
-  was occupied, so a separate packaged startup and shutdown was skipped.
-- The live exports parsed without skipped or duplicate records in the
-  review snapshot. Verification used fixture provider responses and a fake
-  Task Scheduler in the automated suite. No real feeds, provider endpoints,
-  credential writes, or scheduled-task changes were exercised.
-- The source and the binaries already on disk are separate. The review
-  updated documentation. The earlier ThetaDesk changes are staged. The
-  HoundDog shutdown changes, Bridge detail work, and review documentation
-  are unstaged. The staged diff flags a trailing blank line in
-  `ThetaDesk/tests/test_api.py`.
-- `HoundDog/watch.toml` and `bridge/bridge.toml` are tracked, and dashboard
-  edits can change them. Databases, JSON Lines exports, logs, demo output,
-  credentials, and build directories are local artifacts.
-
-## Product decisions to carry forward
-
-- Use daily stock bars for the first study. The report describes the sample
-  and supports no conclusion about causation or intraday reaction speed.
-- Keep each producer independently usable by CLI or localhost dashboard.
-  Bridge continues to use the export contracts and does not share producer
-  databases. The existing study needs only the standard library and
-  timezone data.
-- Add ticker topics explicitly through HoundDog. Groups pool their members'
-  sessions, and each member's volume is compared with its own median.
-- Live coverage is the next source of useful results. Intraday event windows,
-  related-company topics, voice tooling, and a research agent remain future
-  work.
+- HoundDog: 131 Python tests. ThetaDesk: 75 Python tests. Bridge: 62 Python
+  tests. The two dashboard JavaScript suites pass 81 tests together.
+- Specific regressions covered include desktop notification failure after a
+  saved check, a pending daily bar retrying only the remaining history,
+  weekend checks appearing only as activity, mixed backfill/live detections,
+  and Bridge skipping malformed bar prices while keeping valid records.
+- Native batch fixtures exercise both successful builds and each failure
+  path in a checkout with spaces. A fixture for the ThetaDesk raw CLI
+  verifies that SDK INFO authentication payloads stay out of its output
+  while warnings and lookup results still appear.
+- A full offline build in an isolated copy booted both packages. The
+  windowless runner saved and exported a local RSS match, the packaged
+  HoundDog dashboard read it, and ThetaDesk preserved its fixture
+  credential files and saved a pin. Both dashboard shutdown routes
+  stopped their processes.
+- An isolated Edge test covered the weekly split, the 995-of-1,003 feed
+  success ratio, keyboard controls, a 360 px layout, and incremental
+  price retries while the last bar was pending. Live dashboards answered
+  their status requests, and the installed HoundDog job reported Ready
+  with the windowless runner.
 
 <details>
 <summary>Implementation history from November 22, 2026</summary>
@@ -288,16 +155,11 @@ Open, not changed (decide or verify):
    `client.stub.GetStockHistoryEod` to add a timeout. This works with the
    pinned SDK but breaks silently if a release renames the stub. The pin
    protects it; keep the test that covers it.
-7. **The HoundDog executable's background job opens a console window.** The
-   task runs as the signed-in user (`InteractiveToken`), and `HoundDog.exe` is
-   a console program. So each scheduled run of the executable opens a window,
-   and may steal focus. The source install avoids this with `pythonw.exe`.
-   Options:
-   - build a second, windowless executable for the job;
-   - or keep installing the job from source.
-
-   Not observed yet; the job is the user's choice and stays installed until
-   changed. Watch for a console window when the job runs from the executable.
+7. **The HoundDog executable's background job opened a console window (fixed).**
+   The packaged task now uses `HoundDogScheduled.exe`. The build switches
+   a legacy task for the same checkout to the new action and preserves its
+   schedule and settings. Source installs continue to use `pythonw.exe` when
+   available.
 8. **Credentials stay beside the running app. Decided (14:31).** The user puts
    `.env` and `creds.txt` beside `dist\ThetaDesk\ThetaDesk.exe`, or saves them
    from Settings; rebuilds carry them over. A source run reads its own

@@ -70,7 +70,7 @@ def observed(holiday: date) -> date:
     return holiday
 
 
-MONDAY, THURSDAY = 0, 3
+MONDAY, THURSDAY, FRIDAY = 0, 3, 4
 
 
 def holidays(year: int) -> frozenset[date]:
@@ -139,6 +139,15 @@ class NyseCalendar:
         if self.is_trading_day(day) and local >= self.session(day).close_at:
             return day
         return self.previous_trading_day(day)
+
+    def is_weekend_window(self, moment: datetime) -> bool:
+        """Friday's close through Sunday in New York, including early closes."""
+        local = moment.astimezone(self.zone)
+        weekday = local.weekday()
+        if weekday != FRIDAY:
+            return weekday > FRIDAY
+        close = EARLY_CLOSE if self.closes_early(local.date()) else REGULAR_CLOSE
+        return local.time() >= close
 
     def trading_days(self, first: date, last: date) -> list[date]:
         days = []

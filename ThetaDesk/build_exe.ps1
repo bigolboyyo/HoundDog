@@ -11,6 +11,30 @@ $staged = Join-Path $stagingParent "ThetaDesk"
 $backup = Join-Path $releaseParent ("ThetaDesk-previous-" + [Guid]::NewGuid().ToString("N"))
 $configFiles = @(".env", "creds.txt")
 
+# Moves a folder, retrying for up to 30 seconds. Right after a build, antivirus
+# or the search indexer often holds new files open briefly, and Windows refuses
+# to move a folder while any file in it is open.
+function Move-DirectoryWithRetry([string]$source, [string]$destination) {
+    for ($attempt = 1; ; $attempt++) {
+        try {
+            [System.IO.Directory]::Move($source, $destination)
+            return
+        }
+        catch {
+            # Only access denied (how Windows reports a folder holding an open
+            # file) or a sharing or lock violation is worth waiting for; a
+            # missing folder or an existing target is not.
+            $cause = $_.Exception.GetBaseException()
+            $code = $cause.HResult -band 0xFFFF
+            $locked = $cause -is [System.UnauthorizedAccessException] -or
+                ($cause -is [System.IO.IOException] -and $code -in 5, 32, 33)
+            if (-not $locked -or $attempt -ge 15) { throw }
+            Write-Host "Waiting for files in $source to be released (attempt $attempt of 15)..."
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Project environment not found. Run python start_project.py first."
 }
@@ -38,7 +62,7 @@ try {
     New-Item -ItemType Directory -Path $releaseParent -Force | Out-Null
     $hasPrevious = Test-Path -LiteralPath $release -PathType Container
     if ($hasPrevious) {
-        [System.IO.Directory]::Move($release, $backup)
+        Move-DirectoryWithRetry $release $backup
     }
     try {
         if ($hasPrevious) {
@@ -49,11 +73,11 @@ try {
                 }
             }
         }
-        [System.IO.Directory]::Move($staged, $release)
+        Move-DirectoryWithRetry $staged $release
     }
     catch {
         if ($hasPrevious) {
-            [System.IO.Directory]::Move($backup, $release)
+            Move-DirectoryWithRetry $backup $release
             foreach ($name in $configFiles) {
                 Remove-Item -LiteralPath (Join-Path $staged $name) -Force -ErrorAction SilentlyContinue
             }

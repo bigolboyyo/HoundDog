@@ -36,9 +36,11 @@ fallback for that run.
 
 ## Windows executable
 
-Build a portable Windows app folder after running the project at least once:
+Use `build.bat` from the repository root to build both apps. To build only
+ThetaDesk from this folder, prepare its environment and run its build script:
 
 ```powershell
+python start_project.py --setup-only
 .\build_exe.ps1
 ```
 
@@ -68,7 +70,8 @@ ThetaData Terminal REST endpoint at
 `http://127.0.0.1:25510/v2`. Set `THETADATA_REST_BASE_URL` in `.env` to
 override that base URL. If both providers fail, the command reports both
 provider failures. The raw CLI and the raw history endpoint do not store or
-export bars.
+export bars. The raw CLI prints results and logs warnings and errors. The
+SDK's INFO logging includes the authentication session ID.
 
 ## Store and export daily bars
 

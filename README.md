@@ -9,7 +9,7 @@ dependencies once from the repository root:
 python -m pip install -r bridge\requirements.txt
 ```
 
-Build the two executables if this is a fresh checkout. Double-click
+Run `build.bat` if this is a fresh checkout. Double-click
 `start.bat` and click **Start**. All three apps are selected by default. Each
 opens its dashboard in your browser. Clear **Show terminal** to send that
 app's output to `logs\<app>.log`, which is overwritten on its next hidden
@@ -36,6 +36,12 @@ a visible console. HoundDog's Windows scheduled job, when enabled,
 continues on its own.
 
 ## Source, builds, and local data
+
+Shut down the packaged HoundDog and ThetaDesk apps before rebuilding.
+Double-click `build.bat` to prepare ThetaDesk's Python environment and build
+both apps. From a terminal, run `./build.bat --no-pause` to return
+immediately after the build summary. The batch file returns a nonzero exit
+code if either build fails. Bridge runs from source.
 
 - **HoundDog.** Run `python HoundDog\watcher_server.py` from source and open
   its dashboard manually. To build the executable, run

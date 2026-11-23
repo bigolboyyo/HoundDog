@@ -13,6 +13,7 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,9 @@ class NewsCheck:
     started_at: datetime
     topics: frozenset[str] | None
     read_any_feed: bool
+    feeds_read: int
+    feeds_failed: int
+    feeds_skipped: int
 
 
 @dataclass(frozen=True)
@@ -167,24 +171,32 @@ def news_event(record: dict[str, Any]) -> NewsEvent:
 
 def news_check(record: dict[str, Any]) -> NewsCheck:
     topics = record.get("topics")
+    statuses = Counter(feed["status"] for feed in record["feeds"])
+    reads = sum(statuses[status] for status in FEED_READ_STATUSES)
     return NewsCheck(
         check_key=check_key(record),
         started_at=utc_moment(record["started_at"]),
         topics=None if topics is None else frozenset(str(topic["name"]) for topic in topics),
-        read_any_feed=any(feed["status"] in FEED_READ_STATUSES for feed in record["feeds"]),
+        read_any_feed=bool(reads),
+        feeds_read=reads,
+        feeds_failed=statuses["failed"],
+        feeds_skipped=statuses["skipped"],
     )
 
 
 def bar(record: dict[str, Any]) -> Bar:
+    open_price, high, low, close = (float(record[key]) for key in ("open", "high", "low", "close"))
+    if not all(isfinite(price) for price in (open_price, high, low, close)):
+        raise MalformedRecord("bar prices must be finite")
     return Bar(
         symbol=str(record["symbol"]).upper(),
         interval=str(record["interval"]),
         session_date=date.fromisoformat(record["session_date"]),
         start_at=utc_moment(record["start_at"]),
-        open=float(record["open"]),
-        high=float(record["high"]),
-        low=float(record["low"]),
-        close=float(record["close"]),
+        open=open_price,
+        high=high,
+        low=low,
+        close=close,
         volume=int(record["volume"]),
     )
 
@@ -253,7 +265,7 @@ def read_market(directory: Path) -> MarketData:
             parsed = bar(record)
             if seen.is_new(("bar", parsed.symbol, parsed.interval, parsed.start_at)):
                 bars.append(parsed)
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             report.skipped["malformed theta.bar/1"] += 1
     for record in json_lines(directory, "theta-coverage", report):
         try:

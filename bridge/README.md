@@ -32,8 +32,8 @@ in the console). Stop it with **Shut down** at the top of the page, or Ctrl+C. I
 - what each app's export holds, under **Sources and connections**;
 - the study table for each ticker and group, with a one-line comparison per
   ticker;
-- closing prices, session counts, reasons for each session label, and article
-  placement and exclusions for the selected ticker.
+- a closing-price chart with clickable news markers for the selected ticker.
+  Expand **Study details** for coverage, session counts, and article placement.
 
 **Watch tickers.** Choose tickers (those with prices in ThetaDesk are listed;
 add any other) and give each the words its news uses, such as `Apple, AAPL`.
@@ -57,15 +57,29 @@ selected for retry. If only prices failed, use the watchlist's price action.
 closed NYSE session. An update starts after the last saved close, within
 that rolling year. ThetaDesk fills gaps in its cached lookup dates. Use
 **Retry missing bars** to recheck the range with the provider after a
-successful lookup left a bar missing. Wait for an end-of-day bar to be
-available if the market has just closed. Bridge refreshes its study from
+successful lookup left a bar missing. ThetaDesk can save today's bar
+starting at 6 p.m. ET. If the daily bar is still pending, the normal update
+will retry only the recent dates. Bridge refreshes its study from
 the exports after a price request, including when the request reports an
 error after saving partial progress.
 
-**Inspect a session.** Pick a news marker, a segment of the coverage strip, or
-a date in **Inspect a session** to see the close, return, volume, and assigned
-articles. The date range controls filter the chart and ticker detail. The
-main study summary still shows the full available sample.
+**News on the chart.** Select a news marker to see the price move, volume,
+and articles for that day. Select it again to close the details. The
+optional **Study details** panel shows HoundDog's activity by New York
+calendar date, including weekends and today. The bar starts with the first
+recorded check for the ticker's topics. Each day with feed attempts shows
+the successful and failed proportions. Pick a day for the counts,
+including skipped feeds. The date range controls filter the chart and
+ticker detail. The main study summary uses the full available sample.
+
+**Weekly news.** Below the ticker chart, **Weekdays** shows live articles
+that belong to trading sessions. **Full week** also displays a separate
+**Weekend news** list for Friday at or after the NYSE close through Sunday
+in New York time. If Friday was closed, the weekend starts at 4 p.m. ET.
+Weekend articles have a detection time and stay outside the daily price
+study. Monday through Thursday after-close articles still go to the next
+trading session. Use the arrows to browse earlier weeks by detection date.
+The chart's date range controls operate independently of this view.
 
 **Pinned ranges.** Use **Pin this range** to save the active ticker and
 dates in ThetaDesk. Opening a shared pin restores its range, reads the
@@ -108,7 +122,8 @@ handles:
 
 - news and quiet sessions;
 - two weeks with HoundDog "off" (not watched);
-- weekend and after-close articles moving to the next session;
+- a separate weekend-news list and weekday after-close articles moving to
+  the next session;
 - backfill that is left out;
 - one article detected twice that counts once.
 
@@ -164,17 +179,18 @@ group counts once.
 
 ## What the report means
 
-The dashboard's **Ticker detail** shows the session counts, the label and
-reason for each session in ThetaDesk's recorded lookup ranges, and each
-article detection for the ticker's topics. It shows where eligible news lands
-and why backfill, repeat detections, and articles without a usable return
-are excluded. Detection times in this table use New York time. The same
-details are available from `python bridge.py report --json`.
+The dashboard's **Study details** shows HoundDog's daily check activity,
+session statuses, and article placement. Historical price sessions without
+news coverage are omitted from the session table before the first check.
+The table still shows missing bars across ThetaDesk's recorded lookup dates.
+**Article placement** lists only articles assigned to a trading session,
+including sessions with prices pending. Backfill and repeat detections are
+available in the JSON report from `python bridge.py report --json`.
 
 - **Session move** compares the session's close with the previous session's
-  close. Detections from the previous close through the moment before this
-  close belong to this session. Sessions follow the NYSE calendar, including
-  holidays and 13:00 early closes.
+  close. Bridge assigns non-weekend detections from the previous close
+  through the moment before this close to the session. Sessions follow the
+  NYSE calendar, including holidays and 13:00 early closes.
 - **Group:** its members' sessions pooled; each member's volume is compared
   with that member's own median.
 - **News session:** at least one live article matched one of the symbol's
@@ -183,9 +199,9 @@ details are available from `python bridge.py report --json`.
   articles may be old.
 - **Quiet session:** no such article, while HoundDog was watching. That means
   at least one check that read a feed and listed one of the symbol's topics
-  started after the previous close and at or before this close. Sessions HoundDog did not
-  watch (PC off, topic not created yet) are left out and counted as "not
-  watched", because finding no news there means nothing.
+  started outside the weekend window, after the previous close and at or
+  before this close. Weekend checks still appear in HoundDog activity.
+  Sessions without a qualifying check are left out of the quiet sample.
 - **avg |move|:** the average size of the move, up or down.
 - **volume:** session volume as a multiple of the symbol's median volume.
 - **Missing bars:** trading days inside ThetaDesk's looked-up ranges that have

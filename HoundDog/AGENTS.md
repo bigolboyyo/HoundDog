@@ -12,7 +12,9 @@ instructions; this file is a quick architecture and maintenance map.
   dashboard. It reads and writes the project files beside itself.
 - `hounddog_app.py` and `build_exe.ps1`: Windows executable entry point and
   build. The bundle provides dashboard assets. Configuration, SQLite, and
-  exports live beside the executable. Scheduled runs use `watch --scheduled`.
+  exports live beside the executable. The build also produces the
+  windowless `HoundDogScheduled.exe` from `hounddog_scheduled.py`. Its entry
+  point calls the same `watcher.main(["--scheduled"])` as a source run.
 - `scheduled_task.py`: the Windows Task Scheduler job (`\HoundDog\Saved check`)
   that runs `watcher.py --scheduled`, managed by the server's `/api/schedule`
   endpoints through PowerShell's ScheduledTasks cmdlets.
@@ -93,6 +95,8 @@ instructions; this file is a quick architecture and maintenance map.
   task's status afterwards. Off Windows, `supported` is false and changes
   answer 501; Task Scheduler failures answer 502 with PowerShell's message.
   `runs_this_folder` is false when the task points at another HoundDog copy.
+  A rebuild updates only the action of a legacy task that still uses this
+  checkout's `HoundDog.exe watch --scheduled` command and working directory.
 - `watcher.py --scheduled` is one saved check logged with the `scheduled`
   trigger. `run_scheduled` captures what `run` writes to stderr (and any
   traceback) and appends it to `JOB_LOG_NAME` (`background-job.log`) beside the

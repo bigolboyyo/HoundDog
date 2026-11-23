@@ -6,7 +6,7 @@ from pathlib import Path
 from exports import read_market, read_news
 from fixtures import bar, bar_coverage, coverage, event, write_lines
 from market_calendar import NyseCalendar
-from study import DailyStudy, StudySymbol
+from study import CheckDay, DailyStudy, StudySymbol
 
 MON, TUE, WED, THU, FRI = (date(2026, 11, day) for day in (16, 17, 18, 19, 20))
 PREVIOUS_FRI = date(2026, 11, 13)
@@ -71,6 +71,24 @@ class DailyStudyTests(unittest.TestCase):
 
         self.assertEqual(study.quiet.sessions, 0)
 
+    def test_check_days_include_weekend_attempts_and_group_by_eastern_date(self):
+        records = [
+            coverage(1, "2026-11-22 21:00", ["AAPL"], "failed"),
+            coverage(2, "2026-11-23 02:00", ["AAPL", "Apple"], "unchanged"),
+            coverage(3, "2026-11-23 03:00", ["Apple"], "skipped"),
+            coverage(4, "2026-11-24 15:00", ["AAPL"]),
+            coverage(5, "2026-11-16 15:00", None),
+            coverage(6, "2026-11-20 15:00", ["Other"]),
+        ]
+        study = self.run_study(records, StudySymbol("AAPL", ("AAPL", "Apple")))
+
+        self.assertEqual(study.check_days, (
+            CheckDay(date(2026, 11, 22), 3, 1, 1, 1),
+            CheckDay(date(2026, 11, 24), 1, 1, 0, 0),
+        ))
+        self.assertEqual(study.first_check_session, date(2026, 11, 24))
+        self.assertEqual(study.quiet.sessions, 0, "The stored price range ends before these checks")
+
     def test_backfill_and_repeat_detections_are_excluded(self):
         records = self.hourly_checks() + [
             event(1, "2026-11-16 15:00", "https://x/old", ["AAPL"], backfill=True),
@@ -86,22 +104,48 @@ class DailyStudyTests(unittest.TestCase):
             ("old", "backfill"), ("old", "repeat_detection"), ("tue", "repeat_detection"),
         ])
 
-    def test_weekend_news_belongs_to_monday(self):
-        records = [coverage(1, "2026-11-14 15:00", ["AAPL"]), event(1, "2026-11-14 15:00", "https://x/sat", ["AAPL"])]
+    def test_mixed_detection_uses_the_live_topic_regardless_of_topic_order(self):
+        record = event(1, "2026-11-16 15:00", "https://x/mixed", ["New Apple Topic", "AAPL"])
+        record["topics"][0]["backfill"] = True
+        study = self.run_study([record], StudySymbol("AAPL", ("New Apple Topic", "AAPL")))
 
-        study = self.run_study(records)
-
-        self.assertEqual(study.events[0].session, MON)
-        self.assertEqual(study.events[0].placement, "market_closed")
-        self.assertIsNone(study.events[0].exclusion)
+        self.assertEqual([(entry.topic, entry.session) for entry in study.events], [("AAPL", MON)])
+        self.assertEqual(study.excluded_events, ())
         self.assertEqual(study.news.sessions, 1)
 
-    def test_news_without_a_stored_move_is_reported_as_pending(self):
-        records = [event(9, "2026-11-20 22:00", "https://x/late", ["AAPL"])]
+    def test_weekend_news_and_checks_are_separate_from_monday(self):
+        records = [
+            event(1, "2026-11-13 21:00", "https://x/fri", ["AAPL"]),
+            coverage(2, "2026-11-14 15:00", ["AAPL"]),
+            event(2, "2026-11-14 15:00", "https://x/sat", ["AAPL"]),
+            event(3, "2026-11-16 04:59", "https://x/sun", ["AAPL"]),
+            event(4, "2026-11-16 15:00", "https://x/sat", ["AAPL"]),
+        ]
 
         study = self.run_study(records)
 
-        self.assertEqual(study.events[0].session, date(2026, 11, 23))
+        self.assertEqual([entry.event_id for entry in study.weekend_events], ["fri", "sat", "sun"])
+        self.assertEqual(study.events, ())
+        self.assertEqual((study.news.sessions, study.quiet.sessions), (0, 0))
+        self.assertEqual(study.check_days[0].day, date(2026, 11, 14))
+        self.assertIsNone(study.first_check_session)
+
+    def test_monday_after_close_counts_toward_tuesday(self):
+        study = self.run_study([
+            event(1, "2026-11-16 05:00", "https://x/pre-market", ["AAPL"]),
+            event(2, "2026-11-16 22:00", "https://x/after-close", ["AAPL"]),
+        ])
+
+        self.assertEqual([(event.session, event.placement) for event in study.events], [
+            (MON, "before_close"), (TUE, "at_or_after_close"),
+        ])
+
+    def test_news_without_a_stored_move_is_reported_as_pending(self):
+        records = [event(9, "2026-11-23 22:00", "https://x/late", ["AAPL"])]
+
+        study = self.run_study(records)
+
+        self.assertEqual(study.events[0].session, date(2026, 11, 24))
         self.assertEqual(study.events[0].placement, "at_or_after_close")
         self.assertEqual(study.events[0].exclusion, "outside_coverage")
         self.assertFalse(study.events[0].has_move)
@@ -134,6 +178,7 @@ class DailyStudyTests(unittest.TestCase):
 
         kinds = {point.session: point.kind for point in study.sessions}
         self.assertEqual((kinds[MON], kinds[TUE]), ("quiet", "unwatched"))
+        self.assertEqual(study.first_check_session, MON)
 
     def test_bars_without_coverage_records_are_explained(self):
         write_lines(self.folder / "theta-coverage-2026-11-22.jsonl", [])

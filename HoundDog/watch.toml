@@ -3,23 +3,29 @@
 
 [settings]
 fetch_timeout_seconds = 15
-max_feed_megabytes = 5
+max_feed_megabytes = 10
 user_agent = "keyword-watcher/0.1"
-history_retention_days = 90
+history_retention_days = 365
 max_item_age_days = 0
 event_export = true
+
+# ---------------------------------------------------------------- AI and dev
 
 [[sources]]
 name = "Hacker News"
 url = "https://news.ycombinator.com/rss"
 
 [[sources]]
-name = "BBC News"
-url = "https://feeds.bbci.co.uk/news/rss.xml"
+name = "Hacker News Best"
+url = "https://hnrss.org/best"
 
 [[sources]]
 name = "arXiv cs.LG"
-url = "https://export.arxiv.org/api/query?search_query=cat:cs.LG&sortBy=submittedDate&sortOrder=descending&max_results=50"
+url = "https://export.arxiv.org/api/query?search_query=cat:cs.LG&sortBy=submittedDate&sortOrder=descending&max_results=200"
+
+[[sources]]
+name = "arXiv AI"
+url = "https://rss.arxiv.org/rss/cs.AI"
 
 [[sources]]
 name = "OpenAI News"
@@ -30,8 +36,12 @@ name = "Google DeepMind"
 url = "https://deepmind.google/blog/rss.xml"
 
 [[sources]]
-name = "Hugging Face"
+name = "Google Research"
 url = "https://research.google/blog/rss/"
+
+[[sources]]
+name = "Hugging Face"
+url = "https://huggingface.co/blog/feed.xml"
 
 [[sources]]
 name = "Mistral Ai"
@@ -50,12 +60,12 @@ name = "Simon Willison"
 url = "https://simonwillison.net/atom/everything/"
 
 [[sources]]
-name = "arXiv AI"
-url = "https://rss.arxiv.org/rss/cs.AI"
-
-[[sources]]
 name = "The Decoder"
 url = "https://the-decoder.com/feed/"
+
+[[sources]]
+name = "MIT Technology Review"
+url = "https://www.technologyreview.com/feed/"
 
 [[sources]]
 name = "GitHub Blog"
@@ -69,23 +79,526 @@ url = "https://css-tricks.com/feed/"
 name = "Cloudflare Blog"
 url = "https://blog.cloudflare.com/rss/"
 
-[[topics]]
-name = "AI tooling"
-keywords = ["LLM*", "agent*", "prompt injection"]
-exclude = ["crypto"]
+# ---------------------------------------------------------- Tech and security
+
+[[sources]]
+name = "The Verge"
+url = "https://www.theverge.com/rss/index.xml"
+
+[[sources]]
+name = "Ars Technica"
+url = "https://feeds.arstechnica.com/arstechnica/index"
+
+[[sources]]
+name = "TechCrunch"
+url = "https://techcrunch.com/feed/"
+
+[[sources]]
+name = "Wired"
+url = "https://www.wired.com/feed/rss"
+
+[[sources]]
+name = "Engadget"
+url = "https://www.engadget.com/rss.xml"
+
+[[sources]]
+name = "9to5Mac"
+url = "https://9to5mac.com/feed/"
+
+[[sources]]
+name = "Electrek"
+url = "https://electrek.co/feed/"
+
+[[sources]]
+name = "Teslarati"
+url = "https://www.teslarati.com/feed/"
+
+[[sources]]
+name = "Krebs on Security"
+url = "https://krebsonsecurity.com/feed/"
+
+[[sources]]
+name = "BleepingComputer"
+url = "https://www.bleepingcomputer.com/feed/"
+
+[[sources]]
+name = "The Hacker News"
+url = "https://feeds.feedburner.com/TheHackersNews"
+
+# -------------------------------------------------------------- World news
+
+[[sources]]
+name = "BBC News"
+url = "https://feeds.bbci.co.uk/news/rss.xml"
+
+[[sources]]
+name = "BBC World"
+url = "https://feeds.bbci.co.uk/news/world/rss.xml"
+
+[[sources]]
+name = "NPR News"
+url = "https://feeds.npr.org/1001/rss.xml"
+
+[[sources]]
+name = "NYT Home Page"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+
+[[sources]]
+name = "NYT World"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+
+[[sources]]
+name = "Guardian World"
+url = "https://www.theguardian.com/world/rss"
+
+[[sources]]
+name = "Al Jazeera"
+url = "https://www.aljazeera.com/xml/rss/all.xml"
+
+[[sources]]
+name = "France 24"
+url = "https://www.france24.com/en/rss"
+
+[[sources]]
+name = "Sky News World"
+url = "https://feeds.skynews.com/feeds/rss/world.xml"
+
+[[sources]]
+name = "ABC News"
+url = "https://abcnews.go.com/abcnews/topstories"
+
+[[sources]]
+name = "CBS News"
+url = "https://www.cbsnews.com/latest/rss/main"
+
+[[sources]]
+name = "Fox News Latest"
+url = "https://moxie.foxnews.com/google-publisher/latest.xml"
+
+# ------------------------------------------------------------------ Politics
+
+[[sources]]
+name = "Politico"
+url = "https://rss.politico.com/politics-news.xml"
+
+[[sources]]
+name = "The Hill"
+url = "https://thehill.com/feed/"
+
+[[sources]]
+name = "NYT Politics"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"
+
+# ------------------------------------------------------- Business and markets
+
+[[sources]]
+name = "CNBC Top News"
+url = "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+
+[[sources]]
+name = "CNBC Markets"
+url = "https://www.cnbc.com/id/20910258/device/rss/rss.html"
+
+[[sources]]
+name = "MarketWatch"
+url = "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+
+[[sources]]
+name = "WSJ Markets"
+url = "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"
+
+[[sources]]
+name = "NYT Business"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
+
+[[sources]]
+name = "Guardian Business"
+url = "https://www.theguardian.com/uk/business/rss"
+
+[[sources]]
+name = "Seeking Alpha Market Currents"
+url = "https://seekingalpha.com/market_currents.xml"
+
+[[sources]]
+name = "Yahoo Finance Tickers"
+url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL,MSFT,TSLA,NVDA,GOOGL,AMZN,META&region=US&lang=en-US"
+
+[[sources]]
+name = "Google News AAPL"
+url = "https://news.google.com/rss/search?q=Apple+AAPL+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News MSFT"
+url = "https://news.google.com/rss/search?q=Microsoft+MSFT+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News TSLA"
+url = "https://news.google.com/rss/search?q=Tesla+TSLA+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News NVDA"
+url = "https://news.google.com/rss/search?q=Nvidia+NVDA+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News GOOGL"
+url = "https://news.google.com/rss/search?q=Alphabet+Google+GOOGL+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News AMZN"
+url = "https://news.google.com/rss/search?q=Amazon+AMZN+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "Google News META"
+url = "https://news.google.com/rss/search?q=Meta+Platforms+META+stock+when:2d&hl=en-US&gl=US&ceid=US:en"
+
+[[sources]]
+name = "CoinDesk"
+url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
+
+[[sources]]
+name = "Cointelegraph"
+url = "https://cointelegraph.com/rss"
+
+[[sources]]
+name = "Decrypt"
+url = "https://decrypt.co/feed"
+
+[[sources]]
+name = "OilPrice"
+url = "https://oilprice.com/rss/main"
+
+# ------------------------------------------------------------- Games and anime
+
+[[sources]]
+name = "IGN"
+url = "https://feeds.ign.com/ign/all"
+
+[[sources]]
+name = "Polygon"
+url = "https://www.polygon.com/rss/index.xml"
+
+[[sources]]
+name = "Kotaku"
+url = "https://kotaku.com/rss"
+
+[[sources]]
+name = "PC Gamer"
+url = "https://www.pcgamer.com/rss/"
+
+[[sources]]
+name = "Eurogamer"
+url = "https://www.eurogamer.net/feed"
+
+[[sources]]
+name = "GameSpot"
+url = "https://www.gamespot.com/feeds/mashup/"
+
+[[sources]]
+name = "Rock Paper Shotgun"
+url = "https://www.rockpapershotgun.com/feed"
+
+[[sources]]
+name = "Anime News Network"
+url = "https://www.animenewsnetwork.com/all/rss.xml?ann-edition=us"
+
+[[sources]]
+name = "Crunchyroll News"
+url = "https://cr-news-api-service.prd.crunchyrollsvc.com/v1/en-US/rss"
+
+[[sources]]
+name = "MyAnimeList News"
+url = "https://myanimelist.net/rss/news.xml"
+
+[[sources]]
+name = "Anime Corner"
+url = "https://animecorner.me/feed/"
+
+[[sources]]
+name = "Otaku USA"
+url = "https://otakuusamagazine.com/feed/"
+
+# ------------------------------------------------------ Entertainment and music
+
+[[sources]]
+name = "Variety"
+url = "https://variety.com/feed/"
+
+[[sources]]
+name = "The Hollywood Reporter"
+url = "https://www.hollywoodreporter.com/feed/"
+
+[[sources]]
+name = "Deadline"
+url = "https://deadline.com/feed/"
+
+[[sources]]
+name = "Screen Rant"
+url = "https://screenrant.com/feed/"
+
+[[sources]]
+name = "Pitchfork"
+url = "https://pitchfork.com/rss/news/"
+
+[[sources]]
+name = "Billboard"
+url = "https://www.billboard.com/feed/"
+
+[[sources]]
+name = "Rolling Stone"
+url = "https://www.rollingstone.com/feed/"
+
+# -------------------------------------------------------------------- Sports
+
+[[sources]]
+name = "ESPN"
+url = "https://www.espn.com/espn/rss/news"
+
+[[sources]]
+name = "ESPN NFL"
+url = "https://www.espn.com/espn/rss/nfl/news"
+
+[[sources]]
+name = "ESPN NBA"
+url = "https://www.espn.com/espn/rss/nba/news"
+
+[[sources]]
+name = "BBC Sport"
+url = "https://feeds.bbci.co.uk/sport/rss.xml"
+
+[[sources]]
+name = "BBC Football"
+url = "https://feeds.bbci.co.uk/sport/football/rss.xml"
+
+[[sources]]
+name = "CBS Sports"
+url = "https://www.cbssports.com/rss/headlines/"
+
+# --------------------------------------------- Science, health, and the planet
+
+[[sources]]
+name = "NASA"
+url = "https://www.nasa.gov/news-release/feed/"
+
+[[sources]]
+name = "Space.com"
+url = "https://www.space.com/feeds/all"
+
+[[sources]]
+name = "ScienceDaily"
+url = "https://www.sciencedaily.com/rss/all.xml"
+
+[[sources]]
+name = "Phys.org"
+url = "https://phys.org/rss-feed/"
+
+[[sources]]
+name = "New Scientist"
+url = "https://www.newscientist.com/feed/home/"
+
+[[sources]]
+name = "STAT News"
+url = "https://www.statnews.com/feed/"
+
+[[sources]]
+name = "WHO News"
+url = "https://www.who.int/rss-feeds/news-english.xml"
+
+[[sources]]
+name = "NPR Health"
+url = "https://feeds.npr.org/1128/rss.xml"
+
+[[sources]]
+name = "Guardian Environment"
+url = "https://www.theguardian.com/environment/rss"
+
+[[sources]]
+name = "Inside Climate News"
+url = "https://insideclimatenews.org/feed/"
+
+[[sources]]
+name = "USGS Earthquakes M4.5+"
+url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.atom"
+
+[[sources]]
+name = "NHC Atlantic"
+url = "https://www.nhc.noaa.gov/index-at.xml"
+
+# ==================================================================== Topics
+# Keywords are case-insensitive whole words or phrases; a trailing * matches
+# any ending (agent* matches agents). Any exclude term vetoes the article.
 
 [[topics]]
 name = "Breaking"
-keywords = ["breaking", "outage", "new", "underway", "trump", "putin", "xi", "trilateral"]
+keywords = ["breaking", "breaking news", "just in", "developing story", "live updates", "state of emergency", "evacuat*", "mass shooting", "explosion", "terror attack", "plane crash", "outage"]
+exclude = ["Breaking Bad", "record-breaking", "groundbreaking"]
+
+[[topics]]
+name = "World affairs"
+keywords = ["Ukraine", "Russia*", "Putin", "Zelensky*", "Gaza", "Israel*", "Hamas", "Hezbollah", "Iran*", "Xi Jinping", "Beijing", "Taiwan", "North Korea", "Kim Jong Un", "NATO", "United Nations", "European Union", "ceasefire", "sanctions", "trilateral", "G7", "G20"]
+
+[[topics]]
+name = "US politics"
+keywords = ["Trump", "Biden", "Vance", "White House", "Congress", "Senate", "Senator*", "Republican*", "Democrat*", "GOP", "Supreme Court", "executive order", "government shutdown", "impeach*", "filibuster", "Capitol Hill"]
+
+[[topics]]
+name = "Elections"
+keywords = ["election*", "ballot*", "midterm*", "primaries", "primary election", "electoral", "voter*", "polling", "exit poll*", "campaign trail", "swing state*"]
+
+[[topics]]
+name = "Markets"
+keywords = ["stock market", "stocks", "Wall Street", "S&P 500", "Nasdaq", "Dow Jones", "earnings", "quarterly results", "IPO", "bull market", "bear market", "sell-off", "selloff", "Treasury yield*", "bond yield*", "market cap", "share price", "shares rose", "shares fell"]
+
+[[topics]]
+name = "Economy and the Fed"
+keywords = ["Federal Reserve", "the Fed", "Powell", "interest rate*", "rate cut*", "rate hike*", "inflation", "CPI", "jobs report", "unemployment", "recession", "GDP", "tariff*", "trade war", "central bank*", "ECB", "Bank of England", "consumer spending"]
 
 [[topics]]
 name = "AAPL"
-keywords = ["AAPL", "apple", "iphone", "steve", "jobs", "macbook"]
+keywords = ["AAPL", "Apple", "Tim Cook", "Steve Jobs", "iPhone*", "iPad*", "MacBook*", "iOS", "macOS", "Vision Pro", "App Store", "Apple Intelligence", "WWDC", "AirPods", "Apple Watch"]
+exclude = ["Big Apple", "apple pie", "apple cider"]
 
 [[topics]]
 name = "MSFT"
-keywords = ["MSFT", "bill", "gates", "xbox", "vaccine", "windows"]
+keywords = ["MSFT", "Microsoft", "Satya Nadella", "Bill Gates", "Windows 10", "Windows 11", "Azure", "Xbox", "Copilot", "Bing", "Microsoft 365", "LinkedIn", "Activision"]
 
 [[topics]]
 name = "TSLA"
-keywords = ["TSLA", "elon", "musk", "maga", "spacex"]
+keywords = ["TSLA", "Tesla*", "Elon Musk", "Musk", "SpaceX", "Cybertruck", "Model Y", "Model 3", "robotaxi*", "Autopilot", "Full Self-Driving", "FSD", "Optimus", "Gigafactory"]
+
+[[topics]]
+name = "NVDA"
+keywords = ["NVDA", "Nvidia", "Jensen Huang", "GeForce", "RTX", "CUDA", "Blackwell", "H100", "H200", "GB200"]
+
+[[topics]]
+name = "GOOGL"
+keywords = ["GOOGL", "GOOG", "Alphabet", "Google", "Sundar Pichai", "YouTube", "Android", "Gemini", "Waymo", "DeepMind", "Google Chrome"]
+
+[[topics]]
+name = "AMZN"
+keywords = ["AMZN", "Amazon", "Andy Jassy", "AWS", "Amazon Web Services", "Prime Video", "Alexa", "Project Kuiper", "Whole Foods"]
+exclude = ["Amazon rainforest", "Amazon River"]
+
+[[topics]]
+name = "META"
+keywords = ["Meta Platforms", "Meta's", "Meta AI", "Meta Quest", "Zuckerberg", "Facebook", "Instagram", "WhatsApp", "Oculus", "Llama"]
+
+[[topics]]
+name = "AI tooling"
+keywords = ["LLM*", "AI agent*", "agentic", "prompt injection", "Model Context Protocol", "MCP", "RAG", "retrieval-augmented", "fine-tun*", "coding assistant*", "Claude Code", "vector database*", "inference"]
+exclude = ["crypto"]
+
+[[topics]]
+name = "AI models and labs"
+keywords = ["artificial intelligence", "generative AI", "OpenAI", "ChatGPT", "GPT-*", "Anthropic", "Claude", "Gemini", "DeepMind", "Mistral", "Llama", "Grok", "xAI", "DeepSeek", "Qwen", "Hugging Face", "AGI", "frontier model*", "large language model*"]
+
+[[topics]]
+name = "Cybersecurity"
+keywords = ["cyberattack*", "cyber attack*", "ransomware", "data breach*", "hacker*", "hacked", "malware", "phishing", "zero-day", "vulnerabilit*", "CVE-*", "exploited", "botnet", "DDoS", "spyware", "infostealer*"]
+
+[[topics]]
+name = "Consumer tech"
+keywords = ["smartphone*", "Pixel", "Galaxy", "Samsung", "OnePlus", "laptop*", "tablet*", "wearable*", "smartwatch*", "headphones", "earbuds", "VR headset*", "Snapdragon", "gadget*"]
+
+[[topics]]
+name = "Software and dev"
+keywords = ["open source", "open-source", "GitHub", "programming", "software developer*", "web developer*", "JavaScript", "TypeScript", "Python", "Rust", "Linux", "Kubernetes", "Docker", "API", "CSS", "WebAssembly", "compiler"]
+
+[[topics]]
+name = "Chips"
+keywords = ["semiconductor*", "chipmaker*", "TSMC", "Intel", "AMD", "Qualcomm", "Arm Holdings", "ASML", "foundry", "GPU*", "CPU*", "export controls"]
+
+[[topics]]
+name = "Video games"
+keywords = ["video game*", "videogame*", "gaming", "gamer*", "PlayStation", "PS5", "Xbox", "Nintendo", "Switch 2", "Steam Deck", "on Steam", "Epic Games", "Fortnite", "Minecraft", "Grand Theft Auto", "GTA 6", "GTA VI", "Game Pass", "esports", "indie game*", "DLC", "patch notes", "early access"]
+
+[[topics]]
+name = "Anime and manga"
+keywords = ["anime", "manga", "light novel*", "Crunchyroll", "Studio Ghibli", "Toei", "MAPPA", "Shonen Jump", "isekai", "One Piece", "Jujutsu Kaisen", "Demon Slayer", "Chainsaw Man", "Dragon Ball", "Naruto", "Attack on Titan", "My Hero Academia", "Solo Leveling", "Frieren", "Spy x Family", "cosplay", "VTuber*"]
+
+[[topics]]
+name = "Movies and TV"
+keywords = ["box office", "film", "movie*", "trailer", "Netflix", "Disney+", "HBO", "Hulu", "Prime Video", "streaming", "Marvel", "MCU", "DC Studios", "Star Wars", "Oscar*", "Emmy*", "Golden Globe*", "sequel", "season finale", "series premiere", "showrunner", "casting"]
+
+[[topics]]
+name = "Music"
+keywords = ["album*", "song*", "world tour", "concert*", "Grammy*", "Hot 100", "Billboard 200", "Spotify", "rapper", "singer", "music festival", "K-pop", "Taylor Swift", "Beyonce", "Beyoncé", "Drake", "Kendrick Lamar", "BTS"]
+
+[[topics]]
+name = "Celebrity and pop culture"
+keywords = ["celebrity", "celebrities", "red carpet", "Kardashian*", "royal family", "Prince Harry", "Meghan Markle", "King Charles", "influencer*", "TikTok star", "went viral", "dating rumors"]
+
+[[topics]]
+name = "Sports"
+keywords = ["Olympic*", "World Cup", "championship", "playoff*", "Super Bowl", "World Series", "Stanley Cup", "NHL", "UFC", "boxing", "Formula 1", "F1", "Grand Prix", "tennis", "Wimbledon", "golf", "PGA", "MVP"]
+
+[[topics]]
+name = "NFL"
+keywords = ["NFL", "Super Bowl", "quarterback", "touchdown", "Mahomes", "Chiefs", "Cowboys", "49ers", "Packers", "Steelers", "Ravens", "Seahawks", "Broncos", "wide receiver"]
+
+[[topics]]
+name = "NBA"
+keywords = ["NBA", "WNBA", "LeBron", "Lakers", "Celtics", "Knicks", "Nuggets", "Steph Curry", "Wembanyama", "Giannis", "NBA Finals", "triple-double"]
+
+[[topics]]
+name = "Soccer"
+keywords = ["soccer", "Premier League", "Champions League", "La Liga", "Serie A", "Bundesliga", "MLS", "FIFA", "UEFA", "Messi", "Ronaldo", "Haaland", "Mbappe", "Mbappé", "Arsenal", "Manchester United", "Man Utd", "Manchester City", "Liverpool", "Chelsea", "Real Madrid", "Barcelona", "transfer window"]
+
+[[topics]]
+name = "MLB"
+keywords = ["MLB", "baseball", "World Series", "Yankees", "Dodgers", "Red Sox", "Mets", "Ohtani", "home run*", "pitcher"]
+
+[[topics]]
+name = "Science"
+keywords = ["scientist*", "researchers", "study finds", "new study", "physics", "quantum", "fossil*", "dinosaur*", "genome", "CRISPR", "species", "archaeolog*", "peer-reviewed"]
+
+[[topics]]
+name = "Space"
+keywords = ["NASA", "SpaceX", "ESA", "Starship", "Falcon 9", "Artemis", "Blue Origin", "International Space Station", "ISS", "astronaut*", "Mars", "lunar", "asteroid*", "comet*", "exoplanet*", "telescope", "James Webb", "JWST", "satellite*"]
+
+[[topics]]
+name = "Health and medicine"
+keywords = ["FDA", "CDC", "World Health Organization", "vaccine*", "outbreak", "pandemic", "virus", "measles", "bird flu", "H5N1", "COVID*", "cancer", "Alzheimer*", "obesity", "GLP-1", "Ozempic", "Wegovy", "clinical trial*", "drugmaker*", "public health", "mental health"]
+
+[[topics]]
+name = "Climate and environment"
+keywords = ["climate change", "global warming", "climate", "emissions", "carbon", "net zero", "COP3*", "heatwave", "heat wave", "drought", "deforestation", "biodiversity", "renewable*", "solar power", "wind power", "Paris Agreement", "sea level*"]
+
+[[topics]]
+name = "Disasters and weather"
+keywords = ["earthquake*", "tsunami", "hurricane*", "typhoon*", "cyclone*", "tornado*", "flood*", "flash flood*", "wildfire*", "volcano*", "eruption", "landslide*", "blizzard", "winter storm", "severe weather", "tropical storm", "M 6*", "M 7*", "M 8*", "M 9*"]
+
+[[topics]]
+name = "Energy and oil"
+keywords = ["oil price*", "crude", "Brent", "WTI", "OPEC*", "natural gas", "LNG", "gasoline", "gas prices", "refiner*", "pipeline", "nuclear power", "nuclear plant*", "power grid", "electricity prices", "Exxon*", "Chevron"]
+
+[[topics]]
+name = "Crypto"
+keywords = ["Bitcoin", "BTC", "Ethereum", "ETH", "crypto*", "stablecoin*", "blockchain", "Solana", "XRP", "Dogecoin", "Coinbase", "Binance", "memecoin*", "DeFi", "NFT*", "spot ETF"]
+
+[[topics]]
+name = "EVs and autos"
+keywords = ["electric vehicle*", "EV", "EVs", "automaker*", "carmaker*", "Ford", "General Motors", "GM", "Toyota", "Rivian", "Lucid", "BYD", "Volkswagen", "self-driving", "autonomous vehicle*", "charging network", "recall*"]
+
+[[topics]]
+name = "Crime and justice"
+keywords = ["arrested", "charged with", "indicted", "indictment", "convicted", "sentenced", "jury", "verdict", "lawsuit", "sued", "murder", "homicide", "FBI", "Justice Department", "DOJ", "police"]
+
+[[topics]]
+name = "Real estate and housing"
+keywords = ["housing market", "home prices", "mortgage*", "real estate", "rent prices", "homebuyer*", "home sales", "housing starts", "Zillow", "Redfin", "affordable housing"]
+
+[[topics]]
+name = "Jobs and labor"
+keywords = ["layoff*", "laid off", "job cuts", "hiring freeze", "on strike", "workers strike", "labor union*", "trade union*", "UAW", "Teamsters", "labor market", "minimum wage", "remote work", "return to office", "jobless claims"]
+
+[[topics]]
+name = "Startups and VC"
+keywords = ["startup*", "start-up*", "venture capital", "seed round", "Series A", "Series B", "Series C", "funding round", "valuation", "unicorn", "Y Combinator", "acquisition", "acquires", "merger", "M&A"]
+
+[[topics]]
+name = "Social media"
+keywords = ["social media", "TikTok", "Twitter", "Reddit", "YouTube", "Bluesky", "Instagram", "Snapchat", "Discord", "Twitch", "content moderation", "streamer*", "creator economy"]
+
+[[topics]]
+name = "Aviation and travel"
+keywords = ["airline*", "FAA", "Boeing", "Airbus", "airport*", "TSA", "air traffic", "flight*", "cruise ship*", "travel"]

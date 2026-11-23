@@ -7,6 +7,15 @@ import start_project
 
 
 class StartProjectTests(unittest.TestCase):
+    @patch("start_project._is_port_open")
+    @patch("start_project._ensure_environment")
+    def test_setup_only_prepares_dependencies_without_starting_services(
+        self, ensure_environment: Mock, is_port_open: Mock
+    ) -> None:
+        self.assertEqual(start_project.main(setup_only=True), 0)
+        ensure_environment.assert_called_once_with()
+        is_port_open.assert_not_called()
+
     def test_terminal_command_uses_credentials_file_from_app_folder(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project_root = Path(temporary_directory)

@@ -190,11 +190,12 @@ HoundDog still owns the resulting configuration.
 
 The study assigns each article by its first matching detection in New York
 time. If that first detection was backfill, the article is excluded for that
-ticker. On a trading day, detections before the scheduled close go to that
-session. Detections at or after the close, or on a closed day, go to the next
-trading session. The analysis uses close-to-close returns and compares news
-sessions with sessions that have a return and a qualifying HoundDog check
-without an eligible article. Revision records are counted in export status.
+ticker. Friday at or after the scheduled close through Sunday goes into
+Bridge's weekend list. Other detections go to the current session before the
+close or the next trading session afterward. The analysis uses close-to-close
+returns and compares news sessions with sessions that have a return and a
+qualifying weekday HoundDog check without an eligible article. Revision
+records are counted in export status.
 Article placement uses the detection event.
 
 The CLI and dashboard use the same report. Rules and examples are in the

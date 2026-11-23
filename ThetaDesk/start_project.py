@@ -198,7 +198,10 @@ def _open_browser_when_ready() -> None:
         time.sleep(0.25)
 
 
-def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
+def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bool = False) -> int:
+    if setup_only and IS_FROZEN:
+        print("Run start_project.py from source to prepare the build environment.")
+        return 1
     if not IS_FROZEN and not _python_version_supported():
         print(f"Python {MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]} or newer is required to start this project.")
         return 1
@@ -209,6 +212,9 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True) -> int:
     try:
         if not IS_FROZEN:
             _ensure_environment()
+        if setup_only:
+            print("ThetaDesk build environment is ready.")
+            return 0
         if _is_port_open(API_HOST, API_PORT):
             raise RuntimeError(
                 f"Port {API_PORT} is already in use; stop its process first."
@@ -287,5 +293,10 @@ if __name__ == "__main__":
     parser.add_argument("--no-terminal-prompt", action="store_true",
                         help="Use a running Terminal if available and skip the startup prompt.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser in the packaged app.")
+    parser.add_argument("--setup-only", action="store_true", help="Prepare the source environment without starting services.")
     options = parser.parse_args()
-    raise SystemExit(main(ask_terminal=not options.no_terminal_prompt, open_browser=not options.no_browser))
+    raise SystemExit(main(
+        ask_terminal=not options.no_terminal_prompt,
+        open_browser=not options.no_browser,
+        setup_only=options.setup_only,
+    ))

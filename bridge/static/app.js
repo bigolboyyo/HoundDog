@@ -12,10 +12,18 @@ const EASTERN_TIME = new Intl.DateTimeFormat(undefined, {
 const EASTERN_DATE = new Intl.DateTimeFormat("en", {
   timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
 });
+const WEEK_DATE = new Intl.DateTimeFormat(undefined, {
+  timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+});
 const SESSION_LABELS = {
-  news: ["News", "At least one eligible article was assigned to this session."],
-  quiet: ["Quiet", "HoundDog checked this ticker’s topic and read a feed. No eligible article was assigned."],
-  unwatched: ["Not watched", "No eligible article or qualifying HoundDog check in this window."],
+  news: "News",
+  quiet: "Quiet",
+  unwatched: "No qualifying check",
+};
+const MARKET_LABELS = {
+  missing_bar: "Missing bar",
+  missing_previous_bar: "Previous bar missing",
+  invalid_previous_close: "Invalid previous close",
 };
 const MARKET_EXCLUSIONS = {
   missing_bar: "ThetaDesk looked up this session, but its daily bar is missing.",
@@ -27,10 +35,6 @@ const PLACEMENT_REASONS = {
   before_close: "Found before the close and assigned to that day’s session.",
   at_or_after_close: "Found at or after the close and assigned to the next trading session.",
   market_closed: "The exchange was closed that day, so the article went to the next trading session.",
-};
-const ARTICLE_EXCLUSIONS = {
-  backfill: "Excluded. The first detection was marked as backfill.",
-  repeat_detection: "Excluded. HoundDog had already detected this article for a topic mapped to this ticker.",
 };
 // When all apps start together, HoundDog can take a few seconds longer than the bridge.
 const HOUNDDOG_RETRY_MS = 5000;
@@ -64,6 +68,7 @@ const elements = {
   pinStatus: document.querySelector("#pin-status"),
   studyRows: document.querySelector("#study-rows"),
   studyNotes: document.querySelector("#study-notes"),
+  studyNotesPanel: document.querySelector("#study-notes-panel"),
   detailSymbol: document.querySelector("#detail-symbol"),
   detailTitle: document.querySelector("#detail-title"),
   rangeForm: document.querySelector("#range-form"),
@@ -75,10 +80,23 @@ const elements = {
   detailCounts: document.querySelector("#detail-counts"),
   detailSessions: document.querySelector("#detail-sessions"),
   chart: document.querySelector("#chart"),
+  chartKey: document.querySelector("#chart-key"),
+  studyDetails: document.querySelector("#study-details"),
   coverageStrip: document.querySelector("#coverage-strip"),
-  evidenceControls: document.querySelector("#evidence-controls"),
-  evidenceSession: document.querySelector("#evidence-session"),
+  coverageKey: document.querySelector("#coverage-key"),
+  coverageSpan: document.querySelector("#coverage-span"),
+  coverageSummary: document.querySelector("#coverage-summary"),
   sessionEvidence: document.querySelector("#session-evidence"),
+  weeklyNews: document.querySelector("#weekly-news"),
+  weekPrev: document.querySelector("#week-prev"),
+  weekNext: document.querySelector("#week-next"),
+  weekDates: document.querySelector("#week-dates"),
+  weekdaysNews: document.querySelector("#weekdays-news"),
+  fullWeekNews: document.querySelector("#full-week-news"),
+  weeklyNewsCount: document.querySelector("#weekly-news-count"),
+  weeklyNewsList: document.querySelector("#weekly-news-list"),
+  weekendNews: document.querySelector("#weekend-news"),
+  weekendNewsList: document.querySelector("#weekend-news-list"),
   detailEvents: document.querySelector("#detail-events"),
 };
 
@@ -94,12 +112,14 @@ const state = {
   detailSymbol: "",
   range: null,
   session: "",
+  coverageDay: "",
   pinStudy: null,
   pins: [],
   pinsError: "",
   pinsRequestId: 0,
   pinSaveBusy: false,
   detailView: null,
+  weeklyNews: { events: [], weekendEvents: [], week: "", includeWeekend: false },
   hounddogRetry: { timer: null, attempts: 0 },
 };
 
@@ -351,11 +371,13 @@ async function loadPrice(symbol, recheck, { refreshPage = true, after = null } =
     const result = await api(`/api/prices/${encodeURIComponent(symbol)}/fetch`, {
       method: "POST", body: JSON.stringify({ refresh: recheck, after }),
     });
+    const missingLatest = !result.latest_bar || result.latest_bar < result.end_date;
+    const pendingLatest = missingLatest && (!result.covered_through || result.covered_through < result.end_date);
+    const summary = result.bars ? `${result.bars} saved bars · ${result.added} added` : "";
     state.priceRequests.set(symbol, {
-      message: result.bars
-        ? `${result.bars} saved bars · ${result.added} added`
-        : "ThetaDesk returned no bars in this range.",
-      retry: !result.latest_bar || result.latest_bar < result.end_date,
+      message: [summary, pendingLatest ? `Daily bar for ${result.end_date} is pending.` : ""]
+        .filter(Boolean).join(" · ") || "ThetaDesk returned no bars in this range.",
+      retry: missingLatest && !pendingLatest,
     });
   } catch (error) {
     state.priceRequests.set(symbol, { error: true, message: error.message });
@@ -373,7 +395,6 @@ function studyRow(name, study, className = "") {
     element("td", { textContent: percent(study.quiet.mean_abs_change) }),
     element("td", { textContent: ratio(study.news.mean_volume_ratio) }),
     element("td", { textContent: ratio(study.quiet.mean_volume_ratio) }),
-    element("td", { textContent: String(study.unwatched_sessions) }),
     element("td", { className: "verdict", textContent: study.verdict ?? "" }),
   ]);
 }
@@ -384,13 +405,14 @@ function renderStudy(report) {
     ...report.groups.map((group) => studyRow(`${group.name} (${group.symbols.join(", ")})`, group, "group")),
   ];
   elements.studyRows.replaceChildren(...(rows.length ? rows : [element("tr", {}, [
-    element("td", { colSpan: 9, textContent: "No tickers studied yet. Watch one above." }),
+    element("td", { colSpan: 8, textContent: "No tickers studied yet. Watch one above." }),
   ])]));
   const notes = [
     ...report.symbols.flatMap((study) => study.notes.map((note) => `${study.symbol}: ${note}`)),
     ...report.groups.flatMap((group) => group.notes.map((note) => `${group.name}: ${note}`)),
   ];
   elements.studyNotes.replaceChildren(...notes.map((note) => element("li", { textContent: note })));
+  elements.studyNotesPanel.hidden = !notes.length;
 }
 
 function svg(name, attributes = {}, text = "") {
@@ -413,15 +435,11 @@ function makeDetailView(study) {
     excluded_sessions: study.excluded_sessions.filter((point) => within(point.session)),
     missing_bars: study.missing_bars.filter(within),
     events: study.events.filter((event) => within(event.session)),
-    excluded_events: study.excluded_events.filter((event) => within(easternDate(event.detected_at))),
   };
-  const timeline = new Map(prices.map((point) => [point.session, { ...point, kind: "other" }]));
+  const timeline = new Map(prices.map((point) => [point.session, point]));
   for (const point of detail.excluded_sessions) {
     const price = timeline.get(point.session);
-    timeline.set(point.session, {
-      ...point, close: price?.close ?? point.close,
-      kind: !price && point.reason === "missing_bar" ? "missing" : "other",
-    });
+    timeline.set(point.session, { ...point, close: price?.close ?? point.close });
   }
   for (const point of detail.sessions) timeline.set(point.session, point);
   detail.points = [...timeline.values()].sort((left, right) => left.session.localeCompare(right.session));
@@ -434,11 +452,31 @@ function easternDate(iso) {
   return `${names.year}-${names.month}-${names.day}`;
 }
 
+function dateAtUtcMidnight(day) {
+  return new Date(`${day}T00:00:00Z`);
+}
+
+function shiftDay(day, days) {
+  const date = dateAtUtcMidnight(day);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function weekStart(day) {
+  const weekday = dateAtUtcMidnight(day).getUTCDay();
+  return shiftDay(day, -((weekday + 6) % 7));
+}
+
+function currentNewsWeek() {
+  return weekStart(easternDate(new Date().toISOString()));
+}
+
 function renderChart(view) {
   const root = svg("svg", { viewBox: `0 0 ${CHART.width} ${CHART.height}` });
   const points = view?.points ?? [];
   const closes = points.flatMap((point) => point.close === null ? [] : [point.close]);
-  renderCoverage(points);
+  const news = points.filter((point) => point.kind === "news" && point.close !== null);
+  elements.chartKey.hidden = !news.length;
   if (!closes.length) {
     root.append(svg("text", { x: CHART.width / 2, y: CHART.height / 2, "text-anchor": "middle", class: "empty" },
       view ? "No saved prices for this range." : "No ticker selected."));
@@ -467,61 +505,139 @@ function renderChart(view) {
   }, points.at(-1).session));
   let segment = [];
   const drawSegment = () => {
-    if (segment.length) root.append(svg("polyline", { points: segment.join(" "), class: "line" }));
+    if (segment.length === 1) {
+      const [cx, cy] = segment[0];
+      root.append(svg("circle", { cx, cy, r: 2.5, class: "price-point" }));
+    } else if (segment.length > 1) {
+      root.append(svg("polyline", { points: segment.map((point) => point.join(",")).join(" "), class: "line" }));
+    }
     segment = [];
   };
   for (const [index, point] of points.entries()) {
     if (point.close === null) drawSegment();
-    else segment.push(`${x(index)},${y(point.close)}`);
+    else segment.push([x(index), y(point.close)]);
   }
   drawSegment();
-  // News last, so its markers sit on top.
-  points
-    .map((point, index) => ({ point, index }))
-    .filter(({ point }) => point.close !== null)
-    .sort((left, right) => Number(left.point.kind === "news") - Number(right.point.kind === "news"))
-    .forEach(({ point, index }) => {
-      const news = point.kind === "news";
-      const marker = svg("circle", {
-        cx: x(index), cy: y(point.close), r: news ? 5.5 : 2.2, class: point.kind,
-      });
-      const description = `${point.session} · Close ${point.close.toFixed(2)} · ${pointLabel(point)}`;
-      marker.append(svg("title", {}, description));
-      if (news) {
-        marker.setAttribute("role", "button");
-        marker.setAttribute("tabindex", "0");
-        marker.setAttribute("aria-label", `Inspect news on ${point.session}`);
-        marker.setAttribute("data-session", point.session);
-        marker.addEventListener("click", () => inspectSession(point.session));
-        marker.addEventListener("keydown", (event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            inspectSession(point.session);
-          }
-        });
-      }
-      root.append(marker);
+  for (const [index, point] of points.entries()) {
+    if (point.kind !== "news" || point.close === null) continue;
+    const marker = svg("circle", {
+      cx: x(index), cy: y(point.close), r: 5.5, class: "news",
+      role: "button", tabindex: 0, "aria-label": `See news on ${point.session}`,
+      "aria-controls": "session-evidence", "data-session": point.session,
     });
+    const toggle = () => showSessionNews(state.session === point.session ? "" : point.session);
+    marker.addEventListener("click", toggle);
+    marker.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggle();
+      }
+    });
+    root.append(marker);
+  }
   elements.chart.replaceChildren(root);
 }
 
-function pointLabel(point) {
-  return SESSION_LABELS[point.kind]?.[0] ?? (point.kind === "missing" ? "Missing bar" : "Outside study or no return");
+function checkKind(entry) {
+  if (!entry) return "no-check";
+  if (entry.feeds_failed) return entry.feeds_read ? "partial" : "failed";
+  return entry.feeds_read ? "checked" : "skipped";
 }
 
-function renderCoverage(points) {
-  elements.coverageStrip.hidden = !points.length;
-  const root = svg("svg", { viewBox: `0 0 ${CHART.width} 18` });
-  const width = (CHART.width - CHART.left - CHART.right) / Math.max(1, points.length);
-  for (const [index, point] of points.entries()) {
-    const band = svg("rect", {
-      x: CHART.left + index * width, y: 1, width, height: 16, class: point.kind,
+function describeChecks(entry) {
+  if (!entry) return "No check recorded";
+  const count = entry.checks === 1 ? "1 check" : `${entry.checks} checks`;
+  const attempts = entry.feeds_read + entry.feeds_failed;
+  const reads = attempts ? `${entry.feeds_read}/${attempts} feed attempts succeeded` : "No feeds attempted";
+  return [
+    count, reads,
+    entry.feeds_failed ? `${entry.feeds_failed} failed` : "",
+    entry.feeds_skipped ? `${entry.feeds_skipped} skipped` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+function renderCoverage(view) {
+  if (!view.check_days) {
+    elements.coverageStrip.hidden = true;
+    elements.coverageKey.hidden = true;
+    elements.coverageSpan.textContent = "";
+    elements.coverageSummary.textContent = "Restart Bridge to see daily HoundDog activity.";
+    return;
+  }
+  const today = easternDate(new Date().toISOString());
+  const firstCheck = view.check_days[0]?.day;
+  const started = firstCheck ?? today;
+  const first = state.range?.first > started ? state.range.first : started;
+  const last = state.range?.last < today ? state.range.last : today;
+  const end = new Date(`${last}T00:00:00Z`);
+  const days = [];
+  for (const day = new Date(`${first}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
+    days.push(day.toISOString().slice(0, 10));
+  }
+
+  elements.coverageStrip.hidden = !days.length;
+  elements.coverageKey.hidden = !days.length;
+  elements.coverageSpan.textContent = days.length > 1 ? `${first} to ${last}` : "";
+  if (!days.length) {
+    elements.coverageSummary.textContent = firstCheck
+      ? `Checks began ${firstCheck}. No activity in this range.`
+      : "No checks recorded for this ticker yet.";
+    elements.coverageStrip.replaceChildren();
+    return;
+  }
+
+  const records = new Map(view.check_days.map((entry) => [entry.day, entry]));
+  const root = svg("svg", { viewBox: `0 0 ${CHART.width} 24`, preserveAspectRatio: "none" });
+  const width = CHART.width / days.length;
+  const gap = Math.min(1, width * 0.15);
+  const bands = [];
+  const explain = (day) => `${day === today ? "Today" : day} · ${describeChecks(records.get(day))}`;
+  function highlight(index) {
+    for (const [position, band] of bands.entries()) {
+      const active = position === index;
+      band.setAttribute("tabindex", active ? 0 : -1);
+      band.setAttribute("aria-pressed", String(active));
+      band.classList.toggle("active-day", active);
+    }
+    elements.coverageSummary.textContent = explain(days[index]);
+  }
+  for (const [index, day] of days.entries()) {
+    const entry = records.get(day);
+    const kind = checkKind(entry);
+    const bounds = { x: index * width + gap / 2, y: 1, width: width - gap, height: 22 };
+    const band = svg("g", { class: "coverage-day", role: "button", "aria-label": explain(day) });
+    if (kind === "partial") {
+      const passed = bounds.width * entry.feeds_read / (entry.feeds_read + entry.feeds_failed);
+      band.append(
+        svg("rect", { ...bounds, width: passed, class: "checked" }),
+        svg("rect", { ...bounds, x: bounds.x + passed, width: bounds.width - passed, class: "failed" }),
+      );
+    } else {
+      band.append(svg("rect", { ...bounds, class: kind }));
+    }
+    band.append(svg("rect", { ...bounds, class: "day-outline" }));
+    const select = (position) => {
+      state.coverageDay = days[position];
+      highlight(position);
+      bands[position].focus();
+    };
+    band.append(svg("title", {}, explain(day)));
+    band.addEventListener("click", () => select(index));
+    band.addEventListener("keydown", (event) => {
+      const target = {
+        ArrowLeft: Math.max(0, index - 1), ArrowRight: Math.min(days.length - 1, index + 1),
+        Home: 0, End: days.length - 1, Enter: index, " ": index,
+      }[event.key];
+      if (target === undefined) return;
+      event.preventDefault();
+      select(target);
     });
-    band.append(svg("title", {}, `${point.session} · ${pointLabel(point)}`));
-    band.addEventListener("click", () => inspectSession(point.session));
+    bands.push(band);
     root.append(band);
   }
   elements.coverageStrip.replaceChildren(root);
+  const selected = days.indexOf(state.coverageDay);
+  highlight(selected < 0 ? days.length - 1 : selected);
 }
 
 function safeLink(link) {
@@ -541,40 +657,92 @@ function articleTitle(event) {
     : element("span", { textContent });
 }
 
-function articleOutcome(event) {
-  if (event.has_move) return "Counts toward a news session.";
-  if (event.exclusion) return `Excluded from the comparison. ${MARKET_EXCLUSIONS[event.exclusion]}`;
-  return ARTICLE_EXCLUSIONS[event.reason];
+function renderWeeklyNews() {
+  const { events, weekendEvents, week, includeWeekend } = state.weeklyNews;
+  const current = currentNewsWeek();
+  const first = week || current;
+  const friday = shiftDay(first, 4);
+  const sunday = shiftDay(first, 6);
+  const last = includeWeekend ? sunday : friday;
+  let hasPrevious = false;
+  function entriesForWeek(articles, through) {
+    return articles.filter((event) => {
+      const day = easternDate(event.detected_at);
+      if (day < first) hasPrevious = true;
+      return day >= first && day <= through;
+    });
+  }
+  const weekdays = entriesForWeek(events, friday);
+  const weekend = entriesForWeek(weekendEvents, sunday);
+
+  elements.weekDates.textContent = WEEK_DATE.formatRange(dateAtUtcMidnight(first), dateAtUtcMidnight(last));
+  elements.weekPrev.disabled = !hasPrevious;
+  elements.weekNext.disabled = first >= current;
+  elements.weekdaysNews.setAttribute("aria-pressed", String(!includeWeekend));
+  elements.fullWeekNews.setAttribute("aria-pressed", String(includeWeekend));
+  elements.fullWeekNews.textContent = weekend.length ? `Full week · ${weekend.length} weekend` : "Full week";
+  elements.weeklyNewsCount.textContent = weekdays.length
+    ? `${weekdays.length} weekday ${weekdays.length === 1 ? "article" : "articles"} · Detected in ET`
+    : "No live weekday articles found.";
+  elements.weekendNews.hidden = !includeWeekend || !weekend.length;
+  renderWeeklyEntries(elements.weeklyNewsList, weekdays);
+  renderWeeklyEntries(elements.weekendNewsList, includeWeekend ? weekend : []);
 }
 
-function inspectSession(day) {
+function renderWeeklyEntries(list, entries) {
+  const rows = document.createDocumentFragment();
+  for (const event of entries.reverse()) {
+    const meta = [
+      element("time", {
+        dateTime: event.detected_at, textContent: EASTERN_TIME.format(new Date(event.detected_at)), title: "Detected in ET",
+      }),
+    ];
+    if (event.session) {
+      const awaiting = event.session > state.overview.thetadesk.latest_session ? "Awaiting close" : "Price data pending";
+      const status = event.has_move ? "" : MARKET_LABELS[event.exclusion] ?? awaiting;
+      meta.push(` · Session ${event.session}${status ? ` · ${status}` : ""}`);
+    }
+    rows.append(element("li", {}, [
+      articleTitle(event),
+      element("div", { className: "weekly-news-meta muted" }, meta),
+    ]));
+  }
+  list.replaceChildren(rows);
+}
+
+function changeNewsWeek(days) {
+  const current = currentNewsWeek();
+  const next = shiftDay(state.weeklyNews.week || current, days);
+  state.weeklyNews.week = next >= current ? "" : next;
+  renderWeeklyNews();
+}
+
+function articleOutcome(event) {
+  if (event.has_move) return "Counts toward a news session.";
+  return MARKET_EXCLUSIONS[event.exclusion] ?? "Price data pending.";
+}
+
+function showSessionNews(day) {
   const view = state.detailView;
-  const point = view?.points.find((entry) => entry.session === day);
+  const point = view?.sessions.find((entry) => entry.session === day && entry.kind === "news");
   state.session = point ? day : "";
-  elements.evidenceSession.value = state.session;
   elements.sessionEvidence.hidden = !point;
   for (const marker of elements.chart.querySelectorAll("[data-session]")) {
     marker.classList.toggle("selected-session", marker.dataset.session === state.session);
     marker.setAttribute("aria-pressed", String(marker.dataset.session === state.session));
   }
   if (!point) return;
-  const reason = point.reason ? MARKET_EXCLUSIONS[point.reason] : SESSION_LABELS[point.kind]?.[1];
   const stats = element("dl", { className: "facts" });
   setFacts(stats, [
     ["Close", point.close === null ? "—" : point.close.toFixed(2)],
-    ["Return", percent(point.change)],
+    ["Price move", percent(point.change)],
     ["Volume vs. median", ratio(point.volume_ratio)],
   ]);
   const articles = view.events.filter((event) => event.session === day);
-  const articleList = articles.length
-    ? element("ul", { className: "session-articles" }, articles.map((event) =>
-      element("li", {}, [articleTitle(event), element("p", {
-        className: "muted", textContent: `${PLACEMENT_REASONS[event.placement]} ${articleOutcome(event)}`,
-      })])))
-    : element("p", { className: "muted", textContent: "No articles were assigned to this session." });
+  const articleList = element("ul", { className: "session-articles" }, articles.map((event) =>
+    element("li", {}, [articleTitle(event)])));
   elements.sessionEvidence.replaceChildren(
-    element("h3", { textContent: `${day} · ${pointLabel(point)}` }),
-    ...(reason ? [element("p", { className: "muted", textContent: reason })] : []),
+    element("h3", { textContent: day }),
     stats, articleList,
   );
 }
@@ -589,37 +757,34 @@ function renderDetailRows(body, rows, renderRow, columns, emptyMessage) {
 }
 
 function renderSessions(study) {
-  const counts = study ? [
-    ["News", study.sessions.filter((point) => point.kind === "news").length],
-    ["Quiet", study.sessions.filter((point) => point.kind === "quiet").length],
-    ["Not watched", study.sessions.filter((point) => point.kind === "unwatched").length],
+  const afterFirstCheck = (day) => study.first_check_session && day >= study.first_check_session;
+  const included = study.sessions.filter((point) => point.kind !== "unwatched" || afterFirstCheck(point.session));
+  const exclusions = study.excluded_sessions.filter((point) =>
+    point.reason === "missing_bar" || afterFirstCheck(point.session));
+  const counts = [
+    ["News", included.filter((point) => point.kind === "news").length],
+    ["Quiet", included.filter((point) => point.kind === "quiet").length],
     ["Missing daily bar", study.missing_bars.length],
-    ["Other missing returns", study.excluded_sessions.length - study.missing_bars.length],
-  ] : [];
+  ];
   elements.detailCounts.replaceChildren(...counts.map(([label, count]) => element("div", {}, [
     element("dt", { textContent: label }),
     element("dd", { textContent: count }),
   ])));
-  elements.detailCounts.hidden = !study;
-  const sessions = study ? [...study.sessions, ...study.excluded_sessions] : [];
+  const sessions = [...included, ...exclusions];
   sessions.sort((left, right) => right.session.localeCompare(left.session));
   renderDetailRows(elements.detailSessions, sessions, (session) => {
-    const [label, reason] = session.kind
-      ? SESSION_LABELS[session.kind]
-      : ["Excluded", MARKET_EXCLUSIONS[session.reason]];
     return element("tr", {}, [
       element("td", { textContent: session.session }),
-      element("td", { className: "explanation", textContent: label }),
-      element("td", { className: "explanation", textContent: reason }),
+      element("td", { className: "explanation", textContent: SESSION_LABELS[session.kind] ?? MARKET_LABELS[session.reason] }),
       element("td", { textContent: session.close === null ? "–" : session.close.toFixed(2) }),
       element("td", { textContent: percent(session.change) }),
       element("td", { textContent: ratio(session.volume_ratio) }),
     ]);
-  }, 6, study ? "No trading sessions in ThetaDesk’s recorded lookup dates." : "No ticker selected.");
+  }, 5, "No study sessions or missing bars in this range.");
 }
 
 function renderEvents(study) {
-  const events = study ? [...study.events, ...study.excluded_events] : [];
+  const events = [...study.events];
   events.sort((left, right) => Date.parse(right.detected_at) - Date.parse(left.detected_at));
   renderDetailRows(elements.detailEvents, events, (event) => {
     return element("tr", {}, [
@@ -630,13 +795,21 @@ function renderEvents(study) {
         articleTitle(event),
         element("span", { className: "topic muted", textContent: event.topic }),
       ]),
-      element("td", { textContent: event.session ?? "–" }),
+      element("td", { textContent: event.session }),
       element("td", { className: "explanation" }, [
         event.placement ? element("div", { textContent: PLACEMENT_REASONS[event.placement] }) : "",
         element("div", { className: "muted", textContent: articleOutcome(event) }),
       ]),
     ]);
-  }, 4, study ? "No article detections for this ticker’s topics yet." : "No ticker selected.");
+  }, 4, "No articles assigned to a session in this range.");
+}
+
+function renderStudyDetails() {
+  const view = state.detailView;
+  if (!elements.studyDetails.open || !view) return;
+  renderCoverage(view);
+  renderSessions(view);
+  renderEvents(view);
 }
 
 function renderDetail(report) {
@@ -659,18 +832,16 @@ function renderDetail(report) {
   elements.rangeReset.hidden = !state.range;
   elements.pinRange.hidden = !state.overview.thetadesk.enabled || !view?.prices.length;
   elements.pinRange.disabled = state.pinSaveBusy;
+  elements.studyDetails.hidden = !view;
+  elements.weeklyNews.hidden = !study;
+  if (study) {
+    state.weeklyNews.events = study.events;
+    state.weeklyNews.weekendEvents = study.weekend_events ?? [];
+    renderWeeklyNews();
+  }
   renderChart(view);
-  renderSessions(view);
-  renderEvents(view);
-  const points = view?.points ?? [];
-  elements.evidenceControls.hidden = !points.length;
-  elements.evidenceSession.replaceChildren(
-    element("option", { value: "", textContent: "Choose a session" }),
-    ...[...points].reverse().map((point) => element("option", {
-      value: point.session, textContent: `${point.session} · ${pointLabel(point)}`,
-    })),
-  );
-  inspectSession(state.session);
+  renderStudyDetails();
+  showSessionNews(state.session);
 }
 
 function rangeStatus(message) {
@@ -684,6 +855,7 @@ function openStudy(symbol, moveFocus = true) {
   if (state.pinStudy?.study.symbol !== symbol) state.pinStudy = null;
   state.range = null;
   state.session = "";
+  state.coverageDay = "";
   rangeStatus("");
   renderDetail(state.overview.report);
   if (moveFocus) elements.detailTitle.focus();
@@ -748,6 +920,7 @@ async function openPin(pin) {
     state.detailSymbol = data.study.symbol;
     state.range = range;
     state.session = "";
+    state.coverageDay = "";
     renderDetail(state.overview.report);
     rangeStatus(`Opened shared pin · ${range.first} to ${range.last}`);
     elements.detailTitle.focus();
@@ -856,6 +1029,16 @@ elements.detailSymbol.addEventListener("change", () => openStudy(elements.detail
 elements.rangeForm.addEventListener("submit", applyRange);
 elements.rangeReset.addEventListener("click", () => openStudy(state.detailSymbol, false));
 elements.pinRange.addEventListener("click", savePin);
-elements.evidenceSession.addEventListener("change", () => inspectSession(elements.evidenceSession.value));
+elements.studyDetails.addEventListener("toggle", renderStudyDetails);
+elements.weekPrev.addEventListener("click", () => changeNewsWeek(-7));
+elements.weekNext.addEventListener("click", () => changeNewsWeek(7));
+elements.weekdaysNews.addEventListener("click", () => {
+  state.weeklyNews.includeWeekend = false;
+  renderWeeklyNews();
+});
+elements.fullWeekNews.addEventListener("click", () => {
+  state.weeklyNews.includeWeekend = true;
+  renderWeeklyNews();
+});
 
 refresh();

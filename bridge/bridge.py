@@ -70,6 +70,8 @@ def print_report(report: Report) -> None:
         print(f"  Not watched by HoundDog: {study.unwatched_sessions} session(s). Missing bars: {len(study.missing_bars)}.")
         for event in study.events[-5:]:
             print(f"  - {event.session}: [{event.topic}] {event.title}")
+        if study.weekend_events:
+            print(f"  Weekend news: {len(study.weekend_events)} article(s).")
         for note in study.notes:
             print(f"  Note: {note}")
         print()

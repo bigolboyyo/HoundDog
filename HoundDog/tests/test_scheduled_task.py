@@ -94,11 +94,15 @@ class TaskDefinitionTests(unittest.TestCase):
 
 class TaskSchedulerTests(unittest.TestCase):
     def test_executable_task_runs_the_bundled_watcher_in_the_same_folder(self):
-        root = Path("C:/Users/me/HoundDog & Co")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
         executable = str(root / "HoundDog.exe")
+        windowless = root / scheduled_task.WINDOWLESS_RUNNER
+        windowless.touch()
         runner = FakePowerShell(stdout=json.dumps({
             "installed": True, "state": "Ready", "interval": "PT15M",
-            "execute": executable, "arguments": "watch --scheduled",
+            "execute": str(windowless), "arguments": "",
         }))
         bundled = scheduled_task.TaskScheduler(
             root, run=runner, supported=True, executable=executable, frozen=True
@@ -106,10 +110,11 @@ class TaskSchedulerTests(unittest.TestCase):
         status = bundled.install(scheduled_task.JobOptions(15))
         task_xml = runner.calls[0]["env"]["HOUNDDOG_TASK_XML"]
         action = ET.fromstring(task_xml.split("?>", 1)[1]).find(f"{TASK}Actions/{TASK}Exec")
-        self.assertEqual(action.findtext(f"{TASK}Command"), executable)
-        self.assertEqual(action.findtext(f"{TASK}Arguments"), "watch --scheduled")
+        self.assertEqual(action.findtext(f"{TASK}Command"), str(windowless))
+        self.assertIsNone(action.find(f"{TASK}Arguments"))
         self.assertEqual(action.findtext(f"{TASK}WorkingDirectory"), str(root))
         self.assertTrue(status.runs_this_folder)
+        self.assertFalse(status.opens_console)
         self.assertTrue(scheduler(runner, root=root).status().runs_this_folder)
 
         runner.stdout = json.dumps({
@@ -118,9 +123,36 @@ class TaskSchedulerTests(unittest.TestCase):
         })
         self.assertTrue(bundled.status().runs_this_folder)
 
+        runner.stdout = json.dumps({
+            "installed": True, "state": "Ready", "interval": "PT15M",
+            "execute": executable, "arguments": "watch --scheduled",
+        })
+        legacy = bundled.status()
+        self.assertTrue(legacy.runs_this_folder)
+        self.assertTrue(legacy.opens_console)
+
+    def test_upgrade_passes_only_the_matching_commands_and_updates_the_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runner = FakePowerShell(stdout="updated")
+            job = scheduler(runner, root=root)
+            with self.assertRaisesRegex(scheduled_task.ScheduleError, "Missing HoundDogScheduled.exe"):
+                job.upgrade_windowless()
+            self.assertEqual(runner.calls, [])
+            (root / scheduled_task.WINDOWLESS_RUNNER).touch()
+            self.assertTrue(job.upgrade_windowless())
+            environment = runner.calls[0]["env"]
+            self.assertEqual(environment["HOUNDDOG_OLD_COMMAND"], str(root / "HoundDog.exe"))
+            self.assertEqual(environment["HOUNDDOG_OLD_ARGUMENTS"], "watch --scheduled")
+            self.assertEqual(environment["HOUNDDOG_NEW_COMMAND"], str(root / scheduled_task.WINDOWLESS_RUNNER))
+            self.assertEqual(environment["HOUNDDOG_WORKING_DIRECTORY"], str(root))
+            self.assertEqual(runner.scripts, [scheduled_task.UPGRADE_SCRIPT])
+            runner.stdout = ""
+            self.assertFalse(job.upgrade_windowless())
+
     def test_every_script_reports_errors_as_one_line(self):
         for script in (scheduled_task.STATUS_SCRIPT, scheduled_task.INSTALL_SCRIPT,
-                       scheduled_task.RUN_SCRIPT, scheduled_task.REMOVE_SCRIPT):
+                       scheduled_task.UPGRADE_SCRIPT, scheduled_task.RUN_SCRIPT, scheduled_task.REMOVE_SCRIPT):
             self.assertIn("$ProgressPreference = 'SilentlyContinue'", script)
             self.assertTrue(script.rstrip().endswith(
                 "} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"))

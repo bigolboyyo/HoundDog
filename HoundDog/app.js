@@ -788,27 +788,36 @@ elements.showImages.addEventListener("change", () => {
   historyView.render();
 });
 
-// Desktop notifications for new matches found by auto-check. Each article is
-// announced once per session (Preview only keeps finding the same ones), an
-// article matching several topics counts once, and articles already shown by a
-// manual check are not announced later.
+// Auto-check sends one summary per run with new articles. Preview and manual
+// checks can see the same article again, so remember links for this tab.
 const notificationsStorageKey = "keyword-watcher-notifications";
 const notifiedLinks = new Set();
+const notificationCount = new Intl.NumberFormat();
 
 function notificationsAllowed() {
   return "Notification" in window && window.Notification.permission === "granted";
+}
+
+function disableNotifications() {
+  elements.notifyNewMatches.checked = false;
+  window.localStorage.setItem(notificationsStorageKey, "false");
 }
 
 elements.notifyNewMatches.checked =
   window.localStorage.getItem(notificationsStorageKey) === "true" && notificationsAllowed();
 elements.notifyNewMatches.addEventListener("change", async () => {
   if (elements.notifyNewMatches.checked) {
-    if (!("Notification" in window)) {
-      elements.notifyNewMatches.checked = false;
-      showNotice("This browser does not support desktop notifications.");
-    } else if (!notificationsAllowed() && await window.Notification.requestPermission() !== "granted") {
-      elements.notifyNewMatches.checked = false;
-      showNotice("Notifications are blocked for this page in your browser settings.");
+    try {
+      if (!("Notification" in window)) {
+        throw new Error("This browser does not support desktop notifications.");
+      }
+      if (!notificationsAllowed() && await window.Notification.requestPermission() !== "granted") {
+        throw new Error("Notifications are blocked for this page in your browser settings.");
+      }
+    } catch (error) {
+      disableNotifications();
+      showNotice(error instanceof Error ? error.message : "Could not enable desktop notifications.");
+      return;
     }
   }
   window.localStorage.setItem(notificationsStorageKey, String(elements.notifyNewMatches.checked));
@@ -818,18 +827,38 @@ function markAnnounced(matches) {
   matches.forEach((match) => notifiedLinks.add(match.item.link));
 }
 
-function notifyNewMatches(matches) {
-  const fresh = new Map();
-  for (const match of matches) {
-    if (!notifiedLinks.has(match.item.link)) fresh.set(match.item.link, match.item);
-  }
+function notifyNewMatches(matches, failedCount) {
+  const fresh = matches.filter((match) => !notifiedLinks.has(match.item.link));
   markAnnounced(matches);
-  if (!fresh.size || !elements.notifyNewMatches.checked || !notificationsAllowed()) return;
-  const firstTitle = fresh.values().next().value.title || "Untitled item";
-  new window.Notification("HoundDog", {
-    body: fresh.size === 1 ? firstTitle : `${fresh.size} new articles, including "${firstTitle}"`,
-    tag: "hounddog-new-matches",
-  });
+  if (!fresh.length || !elements.notifyNewMatches.checked || !notificationsAllowed()) return;
+
+  const articles = new Set();
+  const topics = new Map();
+  for (const { item, topic } of fresh) {
+    articles.add(item.link);
+    topics.set(topic, (topics.get(topic) ?? 0) + 1);
+  }
+  const count = (value, singular, plural = `${singular}s`) =>
+    `${notificationCount.format(value)} ${value === 1 ? singular : plural}`;
+  const topTopics = [...topics].sort((left, right) => right[1] - left[1]).slice(0, 3);
+  const topicSummary = topTopics.map(([topic, total]) => `${topic} ${notificationCount.format(total)}`);
+  const otherTopics = topics.size - topTopics.length;
+  if (otherTopics) topicSummary.push(`+${count(otherTopics, "topic")}`);
+  const lines = [
+    `${count(fresh.length, "new match", "new matches")} · ${count(articles.size, "article")}`,
+    topicSummary.join(", "),
+    fresh.length !== matches.length ? `${notificationCount.format(matches.length)} total matches this check` : "",
+    failedCount ? `${count(failedCount, "feed")} failed` : "",
+  ];
+  try {
+    new window.Notification("HoundDog", {
+      body: lines.filter(Boolean).join("\n"),
+      tag: "hounddog-new-matches",
+    });
+  } catch {
+    disableNotifications();
+    return " The browser could not show a desktop notification. Notifications were turned off.";
+  }
 }
 
 // The background job's JOB_INTERVALS (scheduled_task.py); the tab offers the same.
@@ -1302,12 +1331,13 @@ async function runCheck(dryRun, button, { automatic = false } = {}) {
       ? ` Skipped: ${skipped.map((source) => source.name).join(", ")}.`
       : "";
     const exportText = data.export_error ? ` Event export not written yet: ${data.export_error}.` : "";
-    showNotice(`${automatic ? "Auto-check: " : ""}${result}${pruned}${failed.length ? ` Failed to load: ${failed.join(", ")}.` : ""}${skippedText}${exportText}`);
+    let notificationText = "";
     if (automatic) {
-      notifyNewMatches(data.matches);
+      notificationText = notifyNewMatches(data.matches, failed.length) ?? "";
     } else {
       markAnnounced(data.matches);
     }
+    showNotice(`${automatic ? "Auto-check: " : ""}${result}${pruned}${failed.length ? ` Failed to load: ${failed.join(", ")}.` : ""}${skippedText}${exportText}${notificationText}`);
     const checkedAt = new Date().toLocaleTimeString(undefined, { timeStyle: "short" });
     elements.checkStatus.textContent = [
       `${dryRun ? "Previewed" : "Checked"} ${checkedAt}`,
@@ -1563,6 +1593,7 @@ class CheckingMode {
       job.state === "Disabled" ? "It is disabled in Task Scheduler." : "",
       job.command_found ? "" : `Its program no longer exists (${job.command}); Python may have moved or been upgraded.`,
       job.runs_this_folder ? "" : `It runs a different HoundDog folder or Python (${job.command}).`,
+      job.opens_console ? "Its current command can open a console window." : "",
       job.options ? "" : "Its schedule was changed in Task Scheduler to something this panel cannot show.",
     ].filter(Boolean);
   }

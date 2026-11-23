@@ -65,13 +65,12 @@
         <p>Average move is the size of the close-to-close change, up or down. Volume is a multiple
           of the ticker's median. These comparisons describe the sessions in the sample. They
           cannot establish whether news caused a price move.</p>
-        <p>A news session has at least one article whose first detection was live. Several articles
-          assigned to the same session count as one news session. A quiet session has no such article
-          and at least one HoundDog check that watched the ticker's topic and read a feed after the
-          prior close through this close. Both groups require a close-to-close return.</p>
-        <p>News is assigned by first detection time in New York. Articles found before the close
-          go to that day's session. Articles found at or after the close, or while the exchange
-          is closed for the day, go to the next trading session.</p>
+        <p>A news session has at least one eligible live article. A quiet session has no such article
+          and at least one qualifying weekday HoundDog check between the two closes.
+          Both groups require a close-to-close return.</p>
+        <p>Bridge uses the first detection time in New York. Friday at or after the close through
+          Sunday goes in Weekend news. Other detections go to that day's session before the close
+          or the next trading session after it.</p>
       </details>
       <div class="table-wrap">
         <table>
@@ -84,14 +83,16 @@
               <th scope="col">Avg move, quiet</th>
               <th scope="col">Volume, news</th>
               <th scope="col">Volume, quiet</th>
-              <th scope="col">Not watched</th>
               <th scope="col" class="verdict">Verdict</th>
             </tr>
           </thead>
           <tbody id="study-rows"></tbody>
         </table>
       </div>
-      <ul id="study-notes" class="notes"></ul>
+      <details id="study-notes-panel" class="study-guide" hidden>
+        <summary>Data notes</summary>
+        <ul id="study-notes" class="notes"></ul>
+      </details>
     </section>
 
     <section class="panel" id="ticker-detail" aria-labelledby="detail-title">
@@ -110,51 +111,76 @@
         <button id="pin-range" type="button" hidden>Pin this range</button>
       </form>
       <p id="range-status" class="muted" role="status" hidden></p>
-      <dl id="detail-counts" class="session-counts" aria-label="Session counts"></dl>
       <div id="chart" class="chart" role="group" aria-label="Closing prices and news markers"></div>
-      <div id="coverage-strip" class="chart coverage-strip" role="img" aria-label="Session coverage"></div>
-      <p class="legend">
-        <span class="dot news"></span> news session
-        <span class="dot quiet"></span> quiet session
-        <span class="dot unwatched"></span> not watched
-        <span class="dot missing"></span> missing bar
-        <span class="dot other"></span> outside study or no return
+      <p id="chart-key" class="legend" hidden>
+        <span class="dot news" aria-hidden="true"></span> Select a news marker to see the price move and articles.
       </p>
-      <div class="inline evidence-controls" id="evidence-controls" hidden>
-        <label for="evidence-session">Inspect a session</label>
-        <select id="evidence-session"></select>
-      </div>
       <article id="session-evidence" class="session-evidence" aria-live="polite" hidden></article>
-      <h3 id="sessions-title">Sessions</h3>
-      <div class="table-wrap detail-table" role="region" tabindex="0" aria-labelledby="sessions-title">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">NYSE session</th>
-              <th scope="col" class="explanation">Label</th>
-              <th scope="col" class="explanation">Reason</th>
-              <th scope="col">Close</th>
-              <th scope="col">Return</th>
-              <th scope="col">Volume</th>
-            </tr>
-          </thead>
-          <tbody id="detail-sessions"></tbody>
-        </table>
-      </div>
-      <h3 id="articles-title">Article placement</h3>
-      <div class="table-wrap detail-table article-table" role="region" tabindex="0" aria-labelledby="articles-title">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Detected (ET)</th>
-              <th scope="col" class="explanation">Article and topic</th>
-              <th scope="col">NYSE session</th>
-              <th scope="col" class="explanation">Placement and study outcome</th>
-            </tr>
-          </thead>
-          <tbody id="detail-events"></tbody>
-        </table>
-      </div>
+      <section id="weekly-news" class="weekly-news" aria-labelledby="weekly-news-title" hidden>
+        <div class="weekly-news-header">
+          <h3 id="weekly-news-title">Weekly news</h3>
+          <div class="week-nav" role="group" aria-label="News week">
+            <button id="week-prev" type="button" aria-label="Previous news week">‹</button>
+            <span id="week-dates" aria-live="polite"></span>
+            <button id="week-next" type="button" aria-label="Next news week">›</button>
+          </div>
+        </div>
+        <div class="week-scope" role="group" aria-label="Days to show">
+          <button id="weekdays-news" type="button" aria-pressed="true">Weekdays</button>
+          <button id="full-week-news" type="button" aria-pressed="false">Full week</button>
+        </div>
+        <p id="weekly-news-count" class="muted" role="status"></p>
+        <ul id="weekly-news-list" class="weekly-news-list"></ul>
+        <section id="weekend-news" class="weekend-news" aria-labelledby="weekend-news-title" hidden>
+          <h4 id="weekend-news-title">Weekend news</h4>
+          <ul id="weekend-news-list" class="weekly-news-list"></ul>
+        </section>
+      </section>
+      <details id="study-details" class="study-guide" hidden>
+        <summary>Study details</summary>
+        <h3>HoundDog activity</h3>
+        <div id="coverage-strip" class="chart coverage-strip" role="group" aria-label="Daily HoundDog activity"></div>
+        <div class="coverage-caption">
+          <span id="coverage-span" class="muted"></span>
+          <span id="coverage-summary" role="status"></span>
+        </div>
+        <p id="coverage-key" class="legend">
+          <span><span class="dot checked" aria-hidden="true"></span> Succeeded</span>
+          <span><span class="dot failed" aria-hidden="true"></span> Failed</span>
+          <span><span class="dot skipped" aria-hidden="true"></span> Feeds skipped</span>
+          <span><span class="dot no-check" aria-hidden="true"></span> No check</span>
+        </p>
+        <h3 id="sessions-title">Sessions</h3>
+        <dl id="detail-counts" class="session-counts" aria-label="Session counts"></dl>
+        <div class="table-wrap detail-table" role="region" tabindex="0" aria-labelledby="sessions-title">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">NYSE session</th>
+                <th scope="col" class="explanation">Status</th>
+                <th scope="col">Close</th>
+                <th scope="col">Return</th>
+                <th scope="col">Volume</th>
+              </tr>
+            </thead>
+            <tbody id="detail-sessions"></tbody>
+          </table>
+        </div>
+        <h3 id="articles-title">Article placement</h3>
+        <div class="table-wrap detail-table article-table" role="region" tabindex="0" aria-labelledby="articles-title">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Detected (ET)</th>
+                <th scope="col" class="explanation">Article and topic</th>
+                <th scope="col">NYSE session</th>
+                <th scope="col" class="explanation">Placement and study outcome</th>
+              </tr>
+            </thead>
+            <tbody id="detail-events"></tbody>
+          </table>
+        </div>
+      </details>
     </section>
     <details class="panel source-details">
       <summary>Sources and connections</summary>
