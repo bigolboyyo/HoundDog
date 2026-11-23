@@ -10,8 +10,8 @@ prices and working with shared pins use ThetaDesk's local API.
 
 ## Setup
 
-Python 3.11 or newer, plus time zone data (which Windows Python does not
-include) and the dashboard's server:
+Use Python 3.11 or newer. Install the dashboard and time-zone dependencies
+from the repository root.
 
 ```powershell
 python -m pip install -r bridge\requirements.txt
@@ -23,17 +23,24 @@ python -m pip install -r bridge\requirements.txt
 python bridge\server.py
 ```
 
-It opens http://127.0.0.1:8090 (`--port` to change it, `--no-browser` to stay
-in the console). Stop it with **Shut down** at the top of the page, or Ctrl+C. It shows:
+The dashboard opens at [127.0.0.1:8090](http://127.0.0.1:8090). Use `--port`
+to change its port or `--no-browser` to start it without opening a tab.
+Stop Bridge with **Shut down** or Ctrl+C.
 
-- a watchlist with the latest exported close, the last qualifying HoundDog
-  check, the news and quiet session counts, and actions to load prices or
-  open the ticker's study;
-- what each app's export holds, under **Sources and connections**;
-- the study table for each ticker and group, with a one-line comparison per
-  ticker;
-- a closing-price chart with clickable news markers for the selected ticker.
-  Expand **Study details** for coverage, session counts, and article placement.
+- the selected ticker's closing-price chart and weekly news at the top,
+  with the last price shown and the latest recorded check in HoundDog's
+  exports;
+- a watchlist with the latest exported close, news and quiet session
+  counts, and actions to load prices or open a ticker's study;
+- the full study table for each ticker and group below the watchlist;
+- coverage, session counts, and article placement under **Study details**,
+  and export summaries under **Sources and connections**.
+
+**Producer connections.** The ThetaHound launcher passes custom producer
+ports when you start the apps together. To choose the ports for one
+standalone Bridge run, use `--hounddog-port` and `--thetadesk-port` on
+`server.py`. Each overrides the corresponding enabled connection for that
+run. For persistent settings, edit [`bridge.toml`](#settings-bridgetoml).
 
 **Watch tickers.** Choose tickers (those with prices in ThetaDesk are listed;
 add any other) and give each the words its news uses, such as `Apple, AAPL`.
@@ -44,9 +51,8 @@ Optionally name a group, such as `Tech Bros`. For each ticker the bridge:
    already exists is left as it is.
 2. adds the ticker, and the group, to `bridge.toml`.
 
-A group is a bridge idea only. Each ticker keeps its own HoundDog topic, so an
-article about Nvidia never counts as news for Apple; the group's row pools its
-members' sessions. Load each new ticker's prices in ThetaDesk too.
+A group pools its member tickers' sessions. Each ticker still uses its own
+topic mapping. Load prices for each ticker you want to compare.
 
 Choose **Watch and load price history** to request daily bars for each
 successfully watched ticker. Bridge shows the topic outcome in the watch
@@ -68,12 +74,15 @@ and articles for that day. Select it again to close the details. The
 optional **Study details** panel shows HoundDog's activity by New York
 calendar date, including weekends and today. The bar starts with the first
 recorded check for the ticker's topics. Each day with feed attempts shows
-the successful and failed proportions. Pick a day for the counts,
-including skipped feeds. The date range controls filter the chart and
-ticker detail. The main study summary uses the full available sample.
+the successful and failed proportions. Successful attempts include downloads
+and unchanged responses. Pick a day for the counts, including skipped
+feeds, which are counted separately from attempts. The date range controls
+filter the chart and ticker detail. The main study summary uses the full
+available sample.
 
-**Weekly news.** Below the ticker chart, **Weekdays** shows live articles
-that belong to trading sessions. **Full week** also displays a separate
+**Weekly news.** The list sits beside the chart on wide screens. **Weekdays**
+shows live articles assigned to trading sessions and counts how many have
+yet to be matched to a price move. **Full week** also displays a separate
 **Weekend news** list for Friday at or after the NYSE close through Sunday
 in New York time. If Friday was closed, the weekend starts at 4 p.m. ET.
 Weekend articles have a detection time and stay outside the daily price
@@ -81,12 +90,11 @@ study. Monday through Thursday after-close articles still go to the next
 trading session. Use the arrows to browse earlier weeks by detection date.
 The chart's date range controls operate independently of this view.
 
-**Pinned ranges.** Use **Pin this range** to save the active ticker and
-dates in ThetaDesk. Opening a shared pin restores its range, reads the
-stored closes through ThetaDesk, and shows matching news from Bridge's
-exports. It also works for pins outside the Bridge watchlist. In that case
-Bridge uses the topic named after the ticker if it has exported matches.
-Refresh either dashboard to see pins added in the other.
+**Pinned ranges.** Use **Pin this range** beside the date controls to save
+the active ticker and dates in ThetaDesk. Opening a shared pin restores its
+range, reads stored closes through ThetaDesk, and shows matching news from
+Bridge's exports. A pin outside the Bridge watchlist uses the topic named
+after its ticker. Refresh either dashboard to see pins added in the other.
 
 ### HTTP API
 
@@ -101,54 +109,50 @@ Refresh either dashboard to see pins added in the other.
 
 ## Demo
 
-Real data takes weeks to build up: a session only counts once HoundDog has
-watched its ticker's topic. To see the dashboard working now:
+A real comparison needs live detections, watched quiet sessions, and
+overlapping prices. Use the demo to explore the dashboard with generated news.
 
 ```powershell
 python bridge\make_demo.py
 python bridge\server.py --config bridge\demo\demo.toml --port 8091
 ```
 
-`make_demo.py` writes `bridge\demo\` (rewritten each run, not kept in git):
+`make_demo.py` regenerates the news files in `bridge\demo\exports\` and
+writes `bridge\demo\demo.toml`. It uses the saved daily prices for AAPL,
+MSFT, and TSLA by default. Load at least two bars for each ticker first.
+Use `--symbols` for others and `--thetadesk` for a different export folder.
+Use a dedicated directory for any custom `--out` path.
 
-- a year of made-up news and HoundDog checks around your real ThetaDesk prices
-  for AAPL, MSFT and TSLA (`--symbols` for others; their prices must be
-  loaded in ThetaDesk);
-- `demo.toml`, which disables the HoundDog and ThetaDesk API connections and
-  shows a "demo data" banner.
+The demo config disables both API connections and shows a banner. Every
+demo headline starts with `[DEMO]`. The generator includes examples of
+news and quiet sessions, a period without checks, weekend news, backfill,
+and repeat detections. It places news more often near large price moves
+to illustrate a populated comparison. Use `--seed` for a different
+repeatable sample.
 
-Every demo headline starts with `[DEMO]`. The demo includes each case the study
-handles:
-
-- news and quiet sessions;
-- two weeks with HoundDog "off" (not watched);
-- a separate weekend-news list and weekday after-close articles moving to
-  the next session;
-- backfill that is left out;
-- one article detected twice that counts once.
-
-The demo news is planted: the bigger a session's real move, the likelier it
-gets an article. So the demo shows what an effect looks like on the dashboard;
-it says nothing about the market. `--seed` picks a different (repeatable) demo.
+Bridge reads the original price exports for the demo. The generated
+news and configuration stay in the demo output folder.
 
 ## Command line
 
-From the `theta_hound` folder:
+From the repository root.
 
 ```powershell
 python bridge\bridge.py status    # what each export folder holds
 python bridge\bridge.py report    # the study, per symbol
 ```
 
-Add `--json` to either command for machine-readable output (for a dashboard or
-another program), and `--config PATH` to use another settings file.
+Add `--json` to either command for machine-readable output. Use
+`--config PATH` with another settings file. The status command also
+reports malformed, incomplete, and duplicate export records.
 
 ## Settings: `bridge.toml`
 
 - `[inputs]`:
   - `hounddog_exports` defaults to `../HoundDog/exports`;
   - `thetadesk_exports`, left empty, means ThetaDesk's own store,
-    `%LOCALAPPDATA%\ThetaDesk\exports`.
+    `%LOCALAPPDATA%\ThetaDesk\exports` on Windows or
+    `~/.thetadesk/exports` if `LOCALAPPDATA` is absent.
 
   Relative paths are relative to `bridge.toml`.
 - `[hounddog] url`: where HoundDog's dashboard runs, `http://127.0.0.1:8080`
@@ -180,12 +184,12 @@ group counts once.
 ## What the report means
 
 The dashboard's **Study details** shows HoundDog's daily check activity,
-session statuses, and article placement. Historical price sessions without
-news coverage are omitted from the session table before the first check.
+session statuses, and article placement. The session table hides unwatched
+sessions before the ticker's first relevant weekday check.
 The table still shows missing bars across ThetaDesk's recorded lookup dates.
 **Article placement** lists only articles assigned to a trading session,
 including sessions with prices pending. Backfill and repeat detections are
-available in the JSON report from `python bridge.py report --json`.
+available in the JSON report from `python bridge\bridge.py report --json`.
 
 - **Session move** compares the session's close with the previous session's
   close. Bridge assigns non-weekend detections from the previous close
@@ -193,26 +197,25 @@ available in the JSON report from `python bridge.py report --json`.
   NYSE calendar, including holidays and 13:00 early closes.
 - **Group:** its members' sessions pooled; each member's volume is compared
   with that member's own median.
-- **News session:** at least one live article matched one of the symbol's
-  topics. An article counts once, at its first detection. Backfill (articles
-  found when a feed or topic was first read) is left out, because those
-  articles may be old.
+- **News session** has a return and an eligible live article. Bridge uses an
+  article's earliest detection for any mapped topic. A live match takes
+  priority if that same detection also contains backfill matches. An
+  article first seen only as backfill is excluded for that ticker.
 - **Quiet session:** no such article, while HoundDog was watching. That means
   at least one check that read a feed and listed one of the symbol's topics
   started outside the weekend window, after the previous close and at or
   before this close. Weekend checks still appear in HoundDog activity.
   Sessions without a qualifying check are left out of the quiet sample.
-- **avg |move|:** the average size of the move, up or down.
-- **volume:** session volume as a multiple of the symbol's median volume.
-- **Missing bars:** trading days inside ThetaDesk's looked-up ranges that have
-  no bar. They are gaps, not moves.
+- **Average move** is the average size of the close-to-close move, up or down.
+- **Volume ratio** compares session volume with the ticker's median volume.
+- **Missing bars** are trading days inside ThetaDesk's recorded lookup dates
+  with no daily bar.
 
 ## Limits
 
-- Daily bars only (ThetaData's free tier), so the study cannot show how fast,
-  or in which direction within a day, a ticker reacted.
-- A session counts as watched after a single check in its window; with an
-  hourly background job, that is nearly always true while the PC is on.
+- The study describes daily returns and volume for the observed sample.
+  Intraday timing and causal analysis need different data and methods.
+- One qualifying check establishes session coverage.
 - Backfill-only checks can count as coverage. A session with a qualifying
   check, a return, and only backfill events can be labeled quiet.
 - The report flags one to nine news sessions as a small sample. The dashboard

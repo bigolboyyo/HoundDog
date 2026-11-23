@@ -1,8 +1,9 @@
 # HoundDog project guide
 
-HoundDog is a local RSS/Atom keyword watcher with a terminal interface and a
-small browser dashboard. The README has the user-facing setup and command
-instructions; this file is a quick architecture and maintenance map.
+HoundDog is a local RSS/Atom keyword watcher with a CLI and a browser
+dashboard. Use the [HoundDog README](README.md) for setup and commands,
+the [export contract](INTEGRATION.md) for record formats, and the
+[ThetaHound handoff](../PLAN.md) for the workspace overview.
 
 ## Project layout
 
@@ -15,9 +16,10 @@ instructions; this file is a quick architecture and maintenance map.
   exports live beside the executable. The build also produces the
   windowless `HoundDogScheduled.exe` from `hounddog_scheduled.py`. Its entry
   point calls the same `watcher.main(["--scheduled"])` as a source run.
-- `scheduled_task.py`: the Windows Task Scheduler job (`\HoundDog\Saved check`)
-  that runs `watcher.py --scheduled`, managed by the server's `/api/schedule`
-  endpoints through PowerShell's ScheduledTasks cmdlets.
+- `scheduled_task.py`: the Windows Task Scheduler job (`\HoundDog\Saved check`).
+  The packaged task runs `HoundDogScheduled.exe`. Source runs invoke
+  `watcher.py --scheduled`. The server manages the job through its
+  `/api/schedule` routes and PowerShell's ScheduledTasks cmdlets.
 - `watch.toml`: source-of-truth configuration for feeds, topics, and the
   optional `[settings]` table (`watcher.Settings`).
 - `watcher.db`: source-of-truth SQLite database for seen items, their saved
@@ -253,6 +255,9 @@ instructions; this file is a quick architecture and maintenance map.
 - `refresh()` can overlap with itself (an auto-check finishing during an edit);
   only the newest `/api/dashboard` response renders (`refreshRequestId`), like
   the tester's `testerRequestId`.
+- Dashboard refresh also loads Health and Activity. The latest record from
+  `/api/activity` feeds the Inbox check summary and the Log flyout.
+  `activityRequestId` keeps an older response from replacing a newer one.
 
 ## Security invariants
 
@@ -276,9 +281,9 @@ instructions; this file is a quick architecture and maintenance map.
 - Feed XML is parsed only through `watcher.parse_feed_xml`, which refuses entity
   declarations; never call `ET.fromstring` on fetched bytes directly.
 - PowerShell scripts in `scheduled_task.py` are fixed strings, sent with
-  `-EncodedCommand`; their inputs (task path, name, XML) travel in `HOUNDDOG_*`
-  environment variables. Never format request data into a script. The task
-  command is built only from `sys.executable` and the project path.
+  `-EncodedCommand`. Their inputs travel in `HOUNDDOG_*` environment
+  variables. Keep request data out of the script text. Task actions use
+  the interpreter and paths derived from the project directory.
 - Gzip bodies are inflated only through `watcher.gunzip_limited`, which stops at
   `max_feed_bytes` (gzip bombs). `ETag`/`Last-Modified` values are sent back only
   after `validator_header` drops long or control-character values.

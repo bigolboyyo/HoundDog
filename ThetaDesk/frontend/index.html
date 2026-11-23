@@ -17,10 +17,6 @@
         <a class="docs-link" href="/docs"
           >API docs <span aria-hidden="true">↗</span></a
         >
-        <div class="connection-status">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span>LOCAL WORKSPACE</span>
-        </div>
         <button
           id="open-settings"
           class="settings-button"
@@ -40,175 +36,130 @@
       </header>
 
       <main class="dashboard">
-        <section class="main-column" aria-labelledby="page-title">
-          <div class="intro">
-            <p class="eyebrow">MARKET DATA / DAILY BARS</p>
-            <h1 id="page-title">Look closer.</h1>
-            <p class="intro-copy">
-              Search end-of-day stock history across the available one-year free
-              window.
-            </p>
-          </div>
+        <section class="lookup-card" aria-labelledby="lookup-title">
+          <h1 id="lookup-title">Find a ticker</h1>
+          <p class="lookup-description">Daily stock prices for the available one-year window.</p>
 
-          <section class="lookup-card" aria-labelledby="lookup-title">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">HISTORICAL LOOKUP</p>
-                <h2 id="lookup-title">Find a ticker</h2>
+          <form id="lookup-form">
+            <div class="ticker-field">
+              <div class="ticker-label-row">
+                <label for="symbol">Ticker symbol</label>
+                <button
+                  id="browse-symbols"
+                  class="browse-button"
+                  type="button"
+                >
+                  Browse symbols
+                </button>
               </div>
-              <span class="data-badge">EOD · US STOCKS</span>
+              <input
+                id="symbol"
+                name="symbol"
+                type="text"
+                list="ticker-options"
+                value="AAPL"
+                maxlength="16"
+                autocapitalize="characters"
+                spellcheck="false"
+                required
+              />
+              <datalist id="ticker-options"></datalist>
             </div>
 
-            <form id="lookup-form">
-              <div class="ticker-field">
-                <div class="ticker-label-row">
-                  <label for="symbol">Ticker symbol</label>
-                  <button
-                    id="browse-symbols"
-                    class="browse-button"
-                    type="button"
-                  >
-                    Browse symbols
-                  </button>
-                </div>
+            <div class="date-fields">
+              <label>
+                <span>From</span>
                 <input
-                  id="symbol"
-                  name="symbol"
-                  type="text"
-                  list="ticker-options"
-                  value="AAPL"
-                  maxlength="16"
-                  autocapitalize="characters"
-                  spellcheck="false"
+                  id="start-date"
+                  name="start_date"
+                  type="date"
                   required
                 />
-                <datalist id="ticker-options"></datalist>
-              </div>
-
-              <div class="date-fields">
-                <label>
-                  <span>From</span>
-                  <input
-                    id="start-date"
-                    name="start_date"
-                    type="date"
-                    required
-                  />
-                </label>
-                <label>
-                  <span>To</span>
-                  <input id="end-date" name="end_date" type="date" required />
-                </label>
-              </div>
-
-              <button id="submit-button" class="primary-button" type="submit">
-                <span>Load history</span>
-                <span aria-hidden="true">↗</span>
-              </button>
-              <label class="refresh-bars">
-                <input id="refresh-bars" type="checkbox" />
-                Retry missing bars
               </label>
-            </form>
-            <p
-              id="request-message"
-              class="request-message"
-              role="status"
-              aria-live="polite"
-            >
-              Choose a ticker and date range to get started.
-            </p>
-          </section>
-
-          <section class="results-section" aria-labelledby="results-title">
-            <div class="results-heading">
-              <div>
-                <p class="eyebrow">QUERY RESULTS</p>
-                <h2 id="results-title">History</h2>
-              </div>
-              <span id="result-count" class="result-count">No data loaded</span>
+              <label>
+                <span>To</span>
+                <input id="end-date" name="end_date" type="date" required />
+              </label>
             </div>
 
-            <div id="stats-grid" class="stats-grid" aria-live="polite"></div>
-            <figure id="chart-card" class="chart-card" hidden>
-              <div class="chart-heading">
-                <div>
-                  <p class="eyebrow">PRICE TIMELINE</p>
-                  <h3 id="chart-title">Closing price</h3>
-                </div>
-                <div class="chart-actions">
-                  <span id="chart-range" class="chart-range"></span>
-                  <button
-                    id="pin-summary"
-                    class="summary-pin-button"
-                    type="button"
-                    hidden
-                  >
-                    Pin summary
-                  </button>
-                </div>
-              </div>
-              <svg
-                id="price-chart"
-                class="price-chart"
-                viewBox="0 0 720 230"
-                role="img"
-                aria-labelledby="chart-accessible-title chart-accessible-description"
-              >
-                <title id="chart-accessible-title"></title>
-                <desc id="chart-accessible-description"></desc>
-              </svg>
-            </figure>
-            <div id="table-wrap" class="table-wrap">
-              <div id="empty-results" class="empty-results">
-                <span class="empty-icon" aria-hidden="true">↳</span>
-                <p>Your results will appear here.</p>
-                <span>Start with a symbol like AAPL or MSFT.</span>
-              </div>
-              <table id="history-table" class="history-table" hidden>
-                <thead></thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </section>
+            <button id="submit-button" class="primary-button" type="submit">
+              <span>Load history</span>
+              <span aria-hidden="true">↗</span>
+            </button>
+            <label class="refresh-bars">
+              <input id="refresh-bars" type="checkbox" />
+              Retry missing bars
+            </label>
+          </form>
+          <p id="request-message" class="request-message" role="status" aria-live="polite"></p>
         </section>
 
-        <aside class="pin-panel" aria-labelledby="pins-title">
-          <div class="pin-panel-heading">
-            <div>
-              <p class="eyebrow">YOUR DASHBOARD</p>
-              <h2 id="pins-title">Pinned summaries</h2>
-            </div>
-            <button id="clear-pins" class="text-button" type="button" hidden>
-              Clear
-            </button>
-          </div>
-          <p class="pin-description">
-            Save a timeline with its latest close, period high, and period low.
-            Pins are kept in ThetaDesk and redrawn from your saved prices.
-          </p>
-          <div id="pins-list" class="pins-list">
-            <div id="empty-pins" class="empty-pins">
-              <span class="pin-placeholder" aria-hidden="true">＋</span>
-              <p>No pinned summaries yet</p>
-              <span>Use “Pin summary” on a timeline to save one.</span>
-            </div>
-          </div>
-          <div class="loaded-heading">
-            <p class="eyebrow">SAVED PRICES</p>
+        <aside class="saved-prices" aria-label="Saved prices">
+          <section class="saved-panel" aria-labelledby="loaded-title">
             <h2 id="loaded-title">Loaded tickers</h2>
-          </div>
-          <p class="pin-description">
-            Prices you have already loaded. Open one to view it without calling ThetaData.
-          </p>
-          <div id="loaded-list" class="loaded-list" aria-labelledby="loaded-title">
-            <p id="empty-loaded" class="empty-loaded">Nothing loaded yet. Load a ticker's history to keep it here.</p>
-          </div>
-          <div class="pin-panel-footer">
-            <span class="footer-mark" aria-hidden="true">T</span>
-            <span>Built for the details.</span>
-          </div>
+            <p class="saved-description">Open stored prices without a provider request.</p>
+            <div id="loaded-list" class="loaded-list">
+              <p id="empty-loaded" class="empty-loaded">Load history to add a ticker here.</p>
+            </div>
+          </section>
+          <section class="saved-panel" aria-labelledby="pins-title">
+            <div class="pin-panel-heading">
+              <h2 id="pins-title">Pinned summaries</h2>
+              <button id="clear-pins" class="text-button" type="button" hidden>
+                Clear
+              </button>
+            </div>
+            <div id="pins-list" class="pins-list">
+              <div id="empty-pins" class="empty-pins">
+                <p>Use “Pin summary” on a chart to save its date range.</p>
+              </div>
+            </div>
+          </section>
         </aside>
+
+        <section class="results-section" aria-labelledby="results-title">
+          <div class="results-heading">
+            <h2 id="results-title">History</h2>
+            <span id="result-count" class="result-count">No data loaded</span>
+          </div>
+
+          <div id="stats-grid" class="stats-grid" aria-live="polite"></div>
+          <figure id="chart-card" class="chart-card" hidden>
+            <div class="chart-heading">
+              <h3 id="chart-title">Closing price</h3>
+              <div class="chart-actions">
+                <span id="chart-range" class="chart-range"></span>
+                <button
+                  id="pin-summary"
+                  class="summary-pin-button"
+                  type="button"
+                  hidden
+                >
+                  Pin summary
+                </button>
+              </div>
+            </div>
+            <svg
+              id="price-chart"
+              class="price-chart"
+              viewBox="0 0 720 230"
+              role="img"
+              aria-labelledby="chart-accessible-title chart-accessible-description"
+            >
+              <title id="chart-accessible-title"></title>
+              <desc id="chart-accessible-description"></desc>
+            </svg>
+          </figure>
+          <div id="table-wrap" class="table-wrap">
+            <div id="empty-results" class="empty-results">
+              <p>Load history or open a saved ticker.</p>
+            </div>
+            <table id="history-table" class="history-table" hidden>
+              <thead></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
       </main>
       <dialog
         id="symbols-dialog"

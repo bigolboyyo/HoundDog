@@ -61,8 +61,7 @@ button {
   text-decoration: none;
 }
 
-.brand-mark,
-.footer-mark {
+.brand-mark {
   display: grid;
   place-items: center;
   width: 30px;
@@ -92,8 +91,6 @@ button {
   color: var(--accent);
 }
 
-.connection-status,
-.data-badge,
 .result-count {
   display: inline-flex;
   align-items: center;
@@ -102,14 +99,6 @@ button {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.12em;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 12px rgba(196, 240, 107, 0.55);
 }
 
 .settings-button {
@@ -192,18 +181,14 @@ button {
 
 .dashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 34px;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  grid-template-areas:
+    "lookup saved"
+    "history saved";
+  grid-template-rows: auto 1fr;
+  gap: 24px;
   align-items: start;
-  padding: 54px 0 62px;
-}
-
-.main-column {
-  min-width: 0;
-}
-
-.intro {
-  margin-bottom: 29px;
+  padding: 32px 0 62px;
 }
 
 .eyebrow {
@@ -221,34 +206,33 @@ p {
 }
 
 h1 {
-  margin-bottom: 9px;
-  font-size: clamp(36px, 5vw, 52px);
-  font-weight: 590;
-  letter-spacing: -0.065em;
-  line-height: 1.05;
+  margin-bottom: 6px;
+  font-size: clamp(25px, 3.5vw, 34px);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 1.15;
 }
 
-.intro-copy {
-  max-width: 540px;
-  margin-bottom: 0;
+.lookup-description {
+  margin-bottom: 16px;
   color: var(--muted);
-  font-size: 14px;
-  line-height: 1.65;
+  font-size: 13px;
 }
 
 .lookup-card,
-.pin-panel {
+.saved-panel {
   border: 1px solid var(--border);
   border-radius: 15px;
   background: rgba(23, 30, 25, 0.94);
 }
 
 .lookup-card {
+  grid-area: lookup;
+  min-width: 0;
   container: history-lookup / inline-size;
-  padding: 23px 24px 17px;
+  padding: 22px 24px;
 }
 
-.section-heading,
 .results-heading,
 .pin-panel-heading {
   display: flex;
@@ -257,23 +241,12 @@ h1 {
   gap: 16px;
 }
 
-.section-heading h2,
 .results-heading h2,
-.pin-panel-heading h2 {
+.saved-panel h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 580;
   letter-spacing: -0.04em;
-}
-
-.data-badge {
-  margin-top: 4px;
-  padding: 7px 9px;
-  border: 1px solid #354236;
-  border-radius: 6px;
-  color: #adbaae;
-  font-size: 9px;
-  letter-spacing: 0.09em;
 }
 
 #lookup-form {
@@ -437,10 +410,6 @@ h1 {
   .date-fields {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .section-heading {
-    flex-wrap: wrap;
-  }
 }
 
 .request-message {
@@ -454,8 +423,14 @@ h1 {
   color: var(--danger);
 }
 
+.request-message:empty {
+  margin: 0;
+  min-height: 0;
+}
+
 .results-section {
-  margin-top: 39px;
+  grid-area: history;
+  min-width: 0;
 }
 
 .results-heading {
@@ -491,10 +466,6 @@ h1 {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 7px;
-}
-
-.chart-heading .eyebrow {
-  margin-bottom: 5px;
 }
 
 .chart-heading h3 {
@@ -622,33 +593,20 @@ h1 {
   background: var(--surface);
 }
 
-.empty-results,
-.empty-pins {
+.empty-results {
   display: flex;
-  min-height: 208px;
-  flex-direction: column;
+  min-height: 104px;
   align-items: center;
   justify-content: center;
-  color: #8b998e;
+  padding: 14px;
   text-align: center;
 }
 
 .empty-results p,
 .empty-pins p {
-  margin: 10px 0 5px;
-  color: #c5d0c7;
+  margin: 0;
+  color: var(--muted);
   font-size: 12px;
-}
-
-.empty-results > span:last-child,
-.empty-pins > span:last-child {
-  color: #76847a;
-  font-size: 10px;
-}
-
-.empty-icon {
-  color: var(--accent);
-  font-size: 24px;
 }
 
 .history-table {
@@ -685,48 +643,35 @@ h1 {
   border-bottom: 0;
 }
 
-.pin-panel {
+.saved-prices {
+  grid-area: saved;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
   position: sticky;
   top: 22px;
-  min-height: 330px;
-  padding: 21px 19px 14px;
+}
+
+.saved-panel {
+  min-width: 0;
+  padding: 16px;
 }
 
 .pin-panel-heading {
   align-items: center;
 }
 
-.pin-panel-heading h2 {
-  font-size: 16px;
-}
-
-.pin-description {
-  margin: 14px 0 18px;
-  color: #89978d;
-  font-size: 11px;
+.saved-description {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 1.6;
-}
-
-.empty-pins {
-  min-height: 185px;
-  border: 1px dashed #344137;
-  border-radius: 9px;
-}
-
-.pin-placeholder {
-  display: grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  border: 1px solid #3c4b3e;
-  border-radius: 50%;
-  color: var(--accent);
-  font-size: 17px;
 }
 
 .pins-list {
   display: grid;
   gap: 9px;
+  margin-top: 12px;
 }
 
 .pinned-summary {
@@ -826,19 +771,6 @@ h1 {
   color: var(--danger);
 }
 
-.loaded-heading {
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid #29342c;
-}
-
-.loaded-heading h2 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 580;
-  letter-spacing: -0.04em;
-}
-
 .loaded-list {
   display: grid;
   gap: 6px;
@@ -846,12 +778,13 @@ h1 {
 
 .empty-loaded {
   margin: 0;
-  color: #76847a;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .loaded-ticker {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
@@ -883,24 +816,6 @@ h1 {
   color: #86948a;
   font-size: 9px;
   white-space: nowrap;
-}
-
-.pin-panel-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 19px;
-  padding-top: 13px;
-  border-top: 1px solid #29342c;
-  color: #728076;
-  font-size: 9px;
-}
-
-.footer-mark {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  font-size: 11px;
 }
 
 .symbols-dialog {
@@ -1153,29 +1068,16 @@ h1 {
 
   .dashboard {
     grid-template-columns: minmax(0, 1fr);
-    gap: 25px;
-    padding-top: 39px;
+    grid-template-areas: "lookup" "saved" "history";
+    grid-template-rows: none;
+    gap: 16px;
+    padding-top: 20px;
   }
 
-  .pin-panel {
-    position: static;
-    min-height: auto;
-  }
-
-  .empty-pins {
-    min-height: 135px;
-  }
-
-  .pin-panel-footer {
-    margin-top: 13px;
-  }
+  .saved-prices { position: static; }
 }
 
 @media (max-width: 500px) {
-  .connection-status {
-    font-size: 8px;
-  }
-
   .docs-link {
     margin-right: 12px;
     font-size: 10px;
@@ -1199,7 +1101,9 @@ h1 {
   .topbar {
     height: auto;
     min-height: 68px;
-    column-gap: 8px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-block: 8px;
   }
 
   .brand {
@@ -1209,9 +1113,5 @@ h1 {
   .docs-link,
   .settings-button {
     margin-inline: 0;
-  }
-
-  .connection-status {
-    letter-spacing: 0.04em;
   }
 }

@@ -83,6 +83,20 @@ class ServerTests(unittest.TestCase):
     def watch(self, body, **headers):
         return self.client().post("/api/watch", json=body, headers=headers)
 
+    def test_custom_ports_route_to_the_local_producers_without_editing_config(self):
+        with self.config.open("a", encoding="utf-8") as config:
+            config.write('\n[thetadesk]\nurl = "http://127.0.0.1:8000"\n')
+        before = self.config.read_bytes()
+        market = Mock()
+        market.return_value.pins.return_value = []
+        app = create_app(self.config, self.hounddog, thetadesk=market, hounddog_port=18080, thetadesk_port=18000)
+        with TestClient(app, base_url=LOCAL) as client:
+            self.assertEqual(client.get("/api/overview").json()["hounddog"]["url"], "http://127.0.0.1:18080")
+            self.assertEqual(self.hounddog.base_url, "http://127.0.0.1:18080")
+            self.assertEqual(client.get("/api/pins").json(), {"pins": []})
+            market.assert_called_once_with("http://127.0.0.1:18000")
+        self.assertEqual(self.config.read_bytes(), before)
+
     def test_overview_has_both_sources_the_study_and_hounddog_topics(self):
         response = self.client().get("/api/overview")
 
@@ -211,7 +225,7 @@ class ServerTests(unittest.TestCase):
         client = self.client()
 
         page = client.get("/").text
-        self.assertIn("theta_hound bridge", page)
+        self.assertIn("ThetaHound Bridge", page)
         self.assertRegex(page, r'src="/app\.js\?v=[0-9a-f]{16}"')
         self.assertRegex(page, r'href="/styles\.css\?v=[0-9a-f]{16}"')
         self.assertEqual(client.get("/app.js").status_code, 200)

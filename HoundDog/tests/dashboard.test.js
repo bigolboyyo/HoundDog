@@ -1038,6 +1038,7 @@ test("activity log shows each check with its trigger and failures", async () => 
       },
     },
   });
+  assert.match(elements.get("#inbox-check-status").textContent, /^Last check .+ · Preview · 3 new matches · 1 feed failed$/);
   elements.get("#tool-button-log").listeners.click();
   await settle();
   const rendered = elements.get("#activity-list").innerHTML;

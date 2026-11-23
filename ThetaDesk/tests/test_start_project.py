@@ -90,6 +90,19 @@ class StartProjectTests(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command[1:], ["api.py", "--host", "127.0.0.1", "--port", "8000"])
 
+    def test_source_wrapper_checks_and_passes_the_custom_port(self) -> None:
+        with (
+            patch("start_project._ensure_environment"),
+            patch("start_project._is_port_open", return_value=False) as is_open,
+            patch("start_project.subprocess.Popen") as popen,
+        ):
+            popen.return_value.wait.return_value = 0
+            popen.return_value.poll.return_value = 0
+            self.assertEqual(start_project.main(ask_terminal=False, port=18000), 0)
+
+        self.assertEqual(is_open.call_args_list[0].args, ("127.0.0.1", 18000))
+        self.assertEqual(popen.call_args.args[0][-2:], ["--port", "18000"])
+
     @patch.dict("os.environ", {"THETADATA_API_KEY": "test-key"})
     def test_api_key_does_not_require_creds_file(self) -> None:
         self.assertTrue(start_project._terminal_credentials_available())

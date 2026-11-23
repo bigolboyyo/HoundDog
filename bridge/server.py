@@ -14,7 +14,7 @@ import hashlib
 import threading
 import webbrowser
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -142,6 +142,9 @@ def create_app(
     hounddog: Callable[[str], HoundDogClient] = HoundDogClient,
     server_stop: ServerStop | None = None,
     thetadesk: Callable[[str], ThetaDeskClient] = ThetaDeskClient,
+    *,
+    hounddog_port: int | None = None,
+    thetadesk_port: int | None = None,
 ) -> FastAPI:
     stop = server_stop if server_stop is not None else ServerStop()
     app = FastAPI(title="theta_hound bridge")
@@ -150,9 +153,15 @@ def create_app(
 
     def load_config() -> BridgeConfig:
         try:
-            return BridgeConfig.load(config_path)
+            config = BridgeConfig.load(config_path)
         except ConfigError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
+        overrides = {}
+        if config.hounddog_url and hounddog_port is not None:
+            overrides["hounddog_url"] = f"http://127.0.0.1:{hounddog_port}"
+        if config.thetadesk_url and thetadesk_port is not None:
+            overrides["thetadesk_url"] = f"http://127.0.0.1:{thetadesk_port}"
+        return replace(config, **overrides) if overrides else config
 
     def live_hounddog(config: BridgeConfig) -> dict[str, Any]:
         if not config.hounddog_url:
@@ -296,18 +305,25 @@ def create_app(
 def main() -> int:
     parser = argparse.ArgumentParser(description="The theta_hound bridge dashboard.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--hounddog-port", type=int, help="Use this local HoundDog port for this run.")
+    parser.add_argument("--thetadesk-port", type=int, help="Use this local ThetaDesk port for this run.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--no-browser", action="store_true", help="Do not open the dashboard in a browser.")
     args = parser.parse_args()
+    for name in ("hounddog_port", "thetadesk_port"):
+        port = getattr(args, name)
+        if port is not None and not 1 <= port <= 65535:
+            parser.error(f"--{name.replace('_', '-')} must be between 1 and 65535.")
     url = f"http://127.0.0.1:{args.port}/"
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     print(f"Bridge dashboard: {url}")
     print("Stop with Shut down on the page, or Ctrl+C.")
     stop = ServerStop()
-    server = uvicorn.Server(uvicorn.Config(
-        create_app(args.config, server_stop=stop), host="127.0.0.1", port=args.port, log_level="warning",
-    ))
+    app = create_app(
+        args.config, server_stop=stop, hounddog_port=args.hounddog_port, thetadesk_port=args.thetadesk_port,
+    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="warning"))
     stop.attach(server)
     server.run()
     print("Bridge dashboard stopped.")

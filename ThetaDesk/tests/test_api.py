@@ -32,7 +32,7 @@ class StockHistoryApiTests(unittest.TestCase):
         response = self.client.get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("Look closer.", response.text)
+        self.assertIn("Find a ticker", response.text)
         self.assertEqual(self.client.get("/app.js").status_code, 200)
         self.assertEqual(self.client.get("/styles.css").status_code, 200)
 

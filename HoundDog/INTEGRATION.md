@@ -1,23 +1,14 @@
-# HoundDog and ThetaDesk integration
+# ThetaHound export contract
 
 HoundDog exports news and check coverage. ThetaDesk exports daily bars and
 the dates it looked up. Bridge reads both exports for the daily study.
 
-## Decisions
+## Ownership
 
-Made on 2026-11-22:
-
-1. **The bridge contains it all.** A third program reads each app's output and
-   does the joining, the topic-to-symbol mapping, time zone conversion, the
-   analysis, and the combined dashboard. HoundDog and ThetaDesk each own
-   their output and keep working independently.
-2. **One output per app, with shared conventions** (below), so the bridge reads
-   both the same way.
-3. **First seen is fixed.** An article keeps the headline and date it had when
-   HoundDog first saw it. Later changes are recorded separately, as revisions.
-4. **History and the export are separate.** History is the dashboard's reading
-   list and keeps its retention setting. The export is the research archive;
-   retention never touches it.
+Each producer owns its database and exports. Bridge joins the exported data,
+maps topics to tickers, and assigns trading sessions in New York time.
+HoundDog's History is its reading list, with retention and read state. The
+export keeps a research archive of saved checks, detections, and revisions.
 
 ## Shared output conventions
 
@@ -38,19 +29,19 @@ the [ThetaDesk guide](../ThetaDesk/README.md#store-and-export-daily-bars).
 
 ## HoundDog's output
 
-Every saved check (command line, background job, or dashboard) appends records
-to `exports/hounddog-YYYY-MM-DD.jsonl` beside `watcher.db`. The day is the UTC
-day the check started. Previews and dry runs do not write to this export.
+With export enabled, every saved check appends records to
+`exports/hounddog-YYYY-MM-DD.jsonl` beside `watcher.db`. The filename uses
+the UTC date when the check started. Previews and dry runs appear in the
+local check log.
 
 - On by default; `event_export = false` in `[settings]` (or Settings > Data in
   the dashboard) turns it off.
 - Text is UTF-8; U+2028 and U+2029 inside strings are escaped, so every line
   break is a record break.
 - Records are queued in `watcher.db` (`export_outbox`) in the same transaction
-  that saves History and the check log, then appended. If a file cannot be written (open elsewhere
-  with a lock, disk full), the records stay queued and a later check writes
-  them, in order. That includes a database too busy to write in time. The
-  dashboard's check notice and `background-job.log` say when that happens.
+  that saves History and the check log, then appended. If delivery fails,
+  the committed rows stay queued for a later check. The dashboard's check
+  notice and `background-job.log` report delivery errors.
 - HoundDog preserves all complete lines. A retry repairs an interrupted final line.
 - A check's records come in this order: one coverage record, then its events,
   then its revisions.
@@ -61,9 +52,10 @@ day the check started. Previews and dry runs do not write to this export.
 
 ### `hounddog.coverage/1`: one per saved check
 
-Answers "was HoundDog watching, and which feeds did it read?" A gap between
-coverage records is a time HoundDog was not checking (PC off or asleep, server
-stopped, a failed check). "No events" is only meaningful inside coverage.
+Coverage records show which topics and feeds a saved check used. A record
+can contain only failures or skipped feeds. Gaps show where the reader has
+no exported coverage. Previews, disabled export, or delayed writes can
+also leave gaps.
 
 ```json
 {
@@ -85,7 +77,8 @@ stopped, a failed check). "No events" is only meaningful inside coverage.
   (dashboard tab auto-check).
 - `status`: `ok`, `unchanged` (answered 304), `failed` (`detail` has the
   error), or `skipped` (not due, or backing off; `detail` says why).
-- `items`: how many items the feed had; not how many were new to it.
+- `items` counts items returned for that feed. `new_matches` counts its
+  new topic matches.
 - Identified by `run_id` when present.
 - New records include `topics`, with a name and matching-rule fingerprint for
   each active topic. Older records have unknown topic coverage. Fetched feeds
@@ -128,11 +121,11 @@ stopped, a failed check). "No events" is only meaningful inside coverage.
   check, with the keywords that matched.
 - Each new topic match also includes its own `feed_url` and `backfill`. Use
   these fields for per-topic analysis when several feeds matched the same article.
-- `backfill`: true when this feed had no saved check under the current topics
-  (a new feed, a new or edited topic, `max_item_age_days` changed, or History
-  cleared). Such items may have been in the feed long before HoundDog looked,
-  so they are not live detections. A genuinely new item that arrives in the
-  same check is flagged too.
+- The event-level `backfill` describes the feed represented at the top
+  level. A per-topic `backfill` describes that match's own feed. The flag
+  means the feed had no saved check under the current rules, as when a
+  feed or topic is added, matching rules change, or History is cleared.
+  The first download can find old and newly published items together.
 - Identified by `event_id` and `run_id` when present.
 
 An article can have more than one event:
@@ -170,54 +163,30 @@ For "when did HoundDog first know about this article", use its earliest
   feed is downloaded (not on a 304).
 - Identified by `event_id` and `run_id` when present.
 
-## What HoundDog does not provide
+## Consumer notes
 
-- **News volume (base rates).** Coverage gives each feed's item count per
-  check, not how many items were new, because HoundDog only remembers matched
-  items. Counting all new items would mean storing every link of every feed.
-- **One story across outlets.** The same story from three outlets is three
-  events with different `event_id`s. Grouping them belongs in the bridge (or in
-  HoundDog's planned story grouping).
-- **Symbols.** Topics are mapped to tickers in the bridge.
-- **Market time.** HoundDog stays UTC-only and dependency-free.
+- Coverage item counts describe each feed response. HoundDog tracks links
+  for articles that match a topic. A count of all newly published feed
+  items requires tracking the full feed.
+- Article IDs identify canonical URLs. Different publishers' URLs can
+  describe the same story and still have distinct IDs.
+- Bridge deduplicates records by schema and record ID. It uses
+  `check_id` as a fallback for legacy records with no `run_id`.
 
 ## How Bridge reads these records
 
-Bridge rereads the export folders and deduplicates records by schema key. It
-keeps its topic-to-ticker mappings in `bridge.toml`. When a user adds a ticker
-from the Bridge dashboard, Bridge asks HoundDog's local API to create the topic.
-HoundDog still owns the resulting configuration.
+Bridge keeps its topic-to-ticker mappings in `bridge.toml`. When a user
+adds a ticker, Bridge asks HoundDog's local API to create the topic.
 
-The study assigns each article by its first matching detection in New York
-time. If that first detection was backfill, the article is excluded for that
-ticker. Friday at or after the scheduled close through Sunday goes into
-Bridge's weekend list. Other detections go to the current session before the
-close or the next trading session afterward. The analysis uses close-to-close
-returns and compares news sessions with sessions that have a return and a
-qualifying weekday HoundDog check without an eligible article. Revision
-records are counted in export status.
-Article placement uses the detection event.
+The study uses the earliest detection that matched any of the ticker's
+topics. A live match takes priority if that detection also includes
+backfill matches. If all its matching topics are backfill, Bridge
+excludes the article for that ticker. Friday at or after the close
+through Sunday goes into the weekend list. Other detections go to the
+current session before the close or the next trading session after it.
+Quiet sessions need a calculable return and a qualifying check outside
+the weekend window. Revision records are counted in export status.
+Placement uses the original detection event.
 
 The CLI and dashboard use the same report. Rules and examples are in the
 [Bridge guide](../bridge/README.md#what-the-report-means).
-
-## Review notes (2026-11-22)
-
-Fixed in the review before this work:
-
-- Feed dates with an unknown time zone were stored as UTC (hours off). They are
-  now stored as "no usable date".
-- `watcher.py --interval` stopped at the first database error, such as
-  "database is locked". It now warns and tries again at the next interval.
-- Turning feed images on or off did not redraw the Inbox.
-- Importing a backup let the backup's read state override an article that was
-  unread here. Local state now wins for articles already in History.
-
-Known limits:
-
-- An open dashboard tab does not reload while the background job saves new
-  matches, so its Inbox goes stale until the page refreshes.
-- The check log behind Health and Log keeps 1,000 checks; coverage in the
-  export is the complete record.
-- Conditional requests depend on each feed. The Health view reports whether
-  the last saved download supplied a usable validator.

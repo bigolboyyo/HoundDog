@@ -1,4 +1,4 @@
-# HoundDog: RSS/Atom Keyword Watcher
+# HoundDog
 
 HoundDog checks RSS and Atom feeds for new items matching topic keywords. It
 includes a terminal watcher and a local dashboard, and remembers seen matches
@@ -10,11 +10,11 @@ in SQLite so the same item is not reported again for the same topic.
 - Internet access to the configured feeds
 - No third-party Python packages
 
-Python 3.12 is known to work with this project.
+Use Python 3.12 or newer when running the full ThetaHound workspace.
 
 ## Quick start
 
-Open PowerShell in the project directory and run:
+Open PowerShell in the `HoundDog` directory.
 
 ```powershell
 python watcher.py --validate
@@ -27,11 +27,10 @@ python watcher.py
 - `--dry-run` shows matches without saving them as seen.
 - Running without options checks feeds and records new matches in `watcher.db`.
 
-The first normal run marks all currently matching items as seen. Use
-`--dry-run` first if you want to preview results.
+Use `--dry-run` to preview the current matches before the first saved check.
 
-The default `watch.toml` and `watcher.db` paths are beside `watcher.py`, so
-the commands work even when run from another directory.
+The CLI finds `watch.toml` and `watcher.db` beside `watcher.py` by default.
+Use `--config PATH` or `--db PATH` to choose different files.
 
 ## Configuration
 
@@ -76,13 +75,13 @@ Keyword matching is case-insensitive and matches whole words. Append `*` to
 match word prefixes. For example, `agent*` matches `agent`, `agents`, and
 `agentic`. Without `*`, `LLM` does not match `LLMs`.
 
-Item links are stored without tracking parameters (`utm_*`, `fbclid`, BBC's
-`at_medium` and similar) or `#fragments`, so one article has one link however
-it was shared. An article keeps the headline and dates it had when first seen;
-later checks only fill in what was missing. Published dates are also stored as UTC, whatever format the
-feed uses; a date whose time zone is unknown (an abbreviation such as CET, or
-no zone at all) counts as no date rather than being guessed. Databases from earlier versions are converted once, automatically,
-the first time a new version opens them.
+HoundDog canonicalizes item links by stripping common tracking parameters
+and URL fragments. History keeps the original headline and date, and a
+later check can fill empty fields. Changes to a headline or date can also
+produce a separate [revision record](INTEGRATION.md#hounddogrevision1-an-articles-headline-or-date-changed).
+Published dates with a usable time zone are stored in UTC. If a feed's
+zone is missing or unknown, HoundDog keeps the original text and leaves
+the normalized date empty. An older database is migrated when it opens.
 
 ### Shared settings
 
@@ -144,8 +143,7 @@ configuration is kept.
 
 ## Automatic checks and the background job
 
-Settings > Checking > Automatic checks chooses who checks your feeds on a
-schedule, so only one thing does:
+Choose an automatic checking mode under **Settings → Checking**.
 
 - Off: check by hand with Check in the toolbar.
 - This dashboard tab: auto-check every 5 minutes to 1 day while the dashboard
@@ -177,10 +175,16 @@ The background job:
   under "Messages from background runs", and Clear messages empties it. Runs
   without problems add nothing.
 
-`python watcher.py --scheduled` runs the same saved check and logs it as a
-background job. It cannot be combined with `--dry-run` or `--interval`.
-Its exit code is the task's last result: 0 for success, 1 when every feed
-failed, 2 for a configuration error, and 3 for an unexpected error.
+`python watcher.py --scheduled` runs one saved check with the background-job
+trigger. Run it by itself as the checking mode. Task Scheduler reports its
+exit code as the last result.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Check completed, including partial failures or feeds skipped by backoff. |
+| 1 | Every attempted feed failed. |
+| 2 | Configuration or usage error. |
+| 3 | Unexpected error. |
 
 ## Command help
 
@@ -194,20 +198,25 @@ The optional dashboard is a dependency-free local web application.
 
 ### Windows executable
 
-Double-click `HoundDog.exe` to start the server and open the dashboard. It
-uses the `watch.toml`, `watcher.db`, and exports beside the executable.
-Keep `watch.toml` with the executable if you move it. To stop the dashboard,
-open **Shut down** in the left toolbar and confirm, or press Ctrl+C in its
-console. A running feed check can finish before the dashboard exits. The
-background job is separate and keeps running.
+Double-click `HoundDog.exe` to serve [127.0.0.1:8080](http://127.0.0.1:8080)
+and open the dashboard. The executable accepts `--port` and `--no-browser`.
+Use `.\HoundDog.exe watch --help` for the bundled CLI.
 
-Shut down the dashboard before running `.\build_exe.ps1` from this folder
-to build or update the app. Keep
-`HoundDogScheduled.exe` alongside `HoundDog.exe` for the scheduled job.
-The packaging dependencies live in `.venv-build`. A rebuild preserves
-app data and switches a legacy task for this checkout to the windowless
-runner without changing its schedule or settings. Use `.\HoundDog.exe watch --help`
-for the bundled watcher CLI.
+Keep `watch.toml`, `watcher.db`, and `exports\` beside the executable.
+Keep `HoundDogScheduled.exe` alongside it for background checks.
+
+Use **Shut down** in the left toolbar or Ctrl+C in the console. The dashboard
+finishes the requests in progress. The background job runs independently.
+Close the dashboard before building. If a check is holding the runner open,
+let it finish and retry the build.
+
+```powershell
+.\build_exe.ps1
+```
+
+The build uses `.venv-build` and puts both executables in this directory.
+It can migrate a legacy task for this checkout to the windowless runner
+while preserving its schedule and settings.
 
 ### Run from source
 
@@ -248,8 +257,9 @@ The dashboard provides:
   - Display: UI size, and whether to load feed images
   - Checking: automatic checks (off, this dashboard tab, or the background job;
     see Automatic checks above), and one desktop summary per dashboard
-    auto-check with new matches. The summary shows the match and article
-    counts, top topics, and any feed failures
+    auto-check with new articles. The summary shows the match and article
+    counts, top topics, and any feed failures. The tab remembers which links
+    it has already shown, so repeated previews do not keep alerting
   - Feeds: request timeout, maximum feed size, user agent, and the maximum
     item age
   - Data: history retention, the event export for other programs (see Using
@@ -263,7 +273,8 @@ The dashboard provides:
   marks it read; each card can also be marked read or unread, and its star
   adds it to or removes it from your favorites. Mark all read clears what the
   Inbox shows (respecting the search). Favorites are kept past the retention
-  period. History can be filtered to All, Unread, or Favorites
+  period. The Inbox shows the most recent recorded check, its match count,
+  and any feed failures. History can be filtered to All, Unread, or Favorites
 - Matches, Inbox, and History as even grids of cards, each with a title, byline,
   dates, matched keywords, a short description, and the link; the banner at the
   top of a card opens the article too. Feed images are off by default, because
@@ -280,34 +291,24 @@ The dashboard provides:
 - clearing History (the seen SQLite database)
 - themes: Pico by default, plus classic DOS and NES styles, each with light and dark modes
 
-The server listens on `127.0.0.1` only and uses `watch.toml` and
-`watcher.db` beside `watcher_server.py`. These files stay the source of truth:
-feed and topic changes are written to `watch.toml`, while seen-item history
-and reset operations use `watcher.db`. The dashboard does not keep a separate
-copy of this data. The selected theme, color mode, UI size, feed images,
-the dashboard tab's automatic checks, notifications, items per page, open tab,
-History filter, and last Settings section are stored in the browser. Read state and favorites are
-stored in `watcher.db`. Use a custom port if needed:
+The server binds to localhost port 8080 by default. It reads and writes
+`watch.toml` and `watcher.db` beside `watcher_server.py` for source runs.
+History, read state, and favorites live in SQLite. Appearance, tab and page
+settings, and dashboard auto-check preferences live in the browser.
+
+Use a custom port if needed.
 
 ```powershell
 python watcher_server.py --port 8081
 ```
 
-In background checking mode, reload the dashboard to see matches saved by the
-scheduled process. An open dashboard does not refresh its Inbox automatically
-after that process saves a check.
+Reload the dashboard to see matches and the latest check from a background run.
 
 NES.css is loaded from its pinned 2.3.0 CDN release. The NES theme is offered
 only when the stylesheet loads successfully; if it is unavailable, the option
 stays hidden and any saved NES selection falls back to Pico. Its rules,
 including the pixel cursor, apply only while the NES theme is selected. The
 Kongtext font file is served locally.
-
-To use a different configuration or database:
-
-```powershell
-python watcher.py --config C:\path\watch.toml --db C:\path\watcher.db
-```
 
 When a feed cannot be fetched or parsed, the watcher prints a warning naming
 that source and continues with the remaining feeds. It exits with status `1`
@@ -337,13 +338,10 @@ and reports JSON errors with an `error` field.
 
 ### Backup and restore limits
 
-Every backup HoundDog exports can be imported again. Both sides share one size
-limit, 1 GiB: export refuses a larger backup and says to shorten History
-retention, and import accepts anything up to that size, with no limit per row
-or per field. If you select both configuration
-and History, the History merge commits before the configuration file is
-replaced. If the file write fails, retrying the backup does not duplicate
-History rows.
+JSON backup exports and import requests have a 1 GiB size limit. Shorten
+History retention and export a smaller backup if needed. When restoring
+both configuration and History, the History merge commits first. If the
+config write fails, retry the restore. The merge deduplicates History rows.
 
 ## Troubleshooting
 
@@ -351,14 +349,14 @@ History rows.
   reports "Unknown API endpoint": an old server is still running. Stop it with
   **Shut down** on its page or `Ctrl+C` in its window, and start
   `start_server.bat` again.
-- Starting the server reports "Another HoundDog server is probably still
-  running": the port is taken. If you cannot find the old window, PowerShell
-  shows which process holds the port, and can stop it:
+- For an occupied port, use PowerShell to identify the listener before
+  closing its dashboard or choosing a different port.
 
   ```powershell
   Get-NetTCPConnection -LocalPort 8080 -State Listen | Select-Object OwningProcess
-  Stop-Process -Id <OwningProcess>
   ```
+- For failed feeds or skipped attempts, inspect **Health** and **Log**.
+  HTTP 429 and 503 can put a feed into backoff until its next eligible check.
 
 ## Using HoundDog with other programs
 
@@ -393,16 +391,9 @@ python -m unittest discover -s tests -p "test_*.py"
 The Task Scheduler tests replace PowerShell with a fake, so they run anywhere
 and never create a real task.
 
-## Resetting seen items
+## Clearing History
 
-Stop the watcher, rename or delete `watcher.db`, then run it again:
-
-```powershell
-Rename-Item watcher.db watcher.db.backup
-python watcher.py --dry-run
-```
-
-Deleting or renaming the database loses the list of previously seen items and
-the check log behind Health and Log. To clear only History, use Clear history
-on the dashboard's History tab. Checks already in progress are discarded when
-they finish so the reset stays in effect.
+Use **Clear history** on the History tab to remove saved items, read state,
+and favorites. The check log and research exports are preserved.
+An overlapping check is discarded when it finishes. For a separate test
+history, run the CLI with a different `--db PATH`.

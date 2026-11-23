@@ -3,6 +3,7 @@ const elements = {
   checkButton: document.querySelector("#check-button"),
   dryRunButton: document.querySelector("#dry-run-button"),
   checkStatus: document.querySelector("#check-status"),
+  inboxCheckStatus: document.querySelector("#inbox-check-status"),
   sourceCount: document.querySelector("#source-count"),
   topicCount: document.querySelector("#topic-count"),
   historyCount: document.querySelector("#history-count"),
@@ -1063,8 +1064,7 @@ async function refresh() {
     if (requestId !== refreshRequestId) return;
     showNotice(error.message);
   }
-  await loadHealth();
-  if (toolbar.openTool === "log") await loadActivity();
+  await Promise.all([loadHealth(), loadActivity()]);
 }
 
 const HEALTH_LABELS = {
@@ -1149,13 +1149,26 @@ function renderActivityRow(check) {
   `;
 }
 
+let activityRequestId = 0;
+
 async function loadActivity() {
+  const requestId = ++activityRequestId;
   try {
     const { checks } = await api("/api/activity");
+    if (requestId !== activityRequestId) return;
+    const [latest] = checks;
+    elements.inboxCheckStatus.textContent = latest ? [
+      `Last check ${formatDate(latest.started_at)}`,
+      latest.saved ? "" : "Preview",
+      `${latest.new_matches} new ${latest.new_matches === 1 ? "match" : "matches"}`,
+      latest.failed.length ? `${latest.failed.length} ${latest.failed.length === 1 ? "feed" : "feeds"} failed` : "",
+    ].filter(Boolean).join(" · ") : "No checks recorded yet.";
     elements.activityList.innerHTML = checks.length
       ? checks.map(renderActivityRow).join("")
       : '<li class="empty">No checks yet.</li>';
   } catch (error) {
+    if (requestId !== activityRequestId) return;
+    elements.inboxCheckStatus.textContent = "Could not read the last check.";
     elements.activityList.innerHTML = `<li class="empty">${escapeHtml(error.message)}</li>`;
   }
 }

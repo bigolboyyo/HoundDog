@@ -1,61 +1,77 @@
 # ThetaDesk
 
+ThetaDesk loads daily stock prices from ThetaData, saves them in SQLite, and
+serves charts and pinned date ranges from the local store.
+
 ## Setup
 
-Use Python 3.12 or newer for source runs; the pinned ThetaData SDK requires
-it, and `start_project.py` refuses older versions. From the `ThetaDesk`
-folder:
+Use Python 3.12 or newer for the pinned SDK. Run this from the `ThetaDesk`
+folder.
 
-```text
+```powershell
 python start_project.py
 ```
 
-The launcher creates `.venv` when needed, installs dependencies when
-`requirements.txt` changes, then runs the API using the ThetaData Python
-client. If the Terminal is already running, its REST fallback is available.
-Otherwise, the launcher asks whether to start the bundled Terminal as a
-backup. When `creds.txt` is present, it passes that file explicitly to the
-Terminal. If declined, the API uses the Python client only for that run. To
-stop the API and any Terminal process it started, click **Shut down** at the
-top of the dashboard. The API finishes requests in progress. Ctrl+C in the
-source wrapper can end the API before those requests finish. A Terminal that
-was already running continues on its own. Open the source dashboard at
-`http://127.0.0.1:8000` manually. The optional Terminal runs in a separate
-window and requires Java.
+The wrapper creates `.venv` when needed, installs dependencies when
+`requirements.txt` changes, and starts the API. Open the dashboard at
+[127.0.0.1:8000](http://127.0.0.1:8000). Use `--port` to choose another port.
+Use `--setup-only` to prepare the environment for tests or a build.
 
-Use `python start_project.py --no-terminal-prompt` to skip the prompt. With
-dependencies installed, you can start only the API on an alternate port:
+The API tries the Python SDK first. The wrapper can use a running ThetaData
+Terminal as a REST fallback. When credentials are available, it offers to
+start the bundled Terminal if needed. Java is required for that option.
+Use `--no-terminal-prompt` to skip the offer and use the SDK with any
+Terminal already running.
+
+Use **Shut down** to finish active API requests and stop a Terminal that
+ThetaDesk started. Ctrl+C in the source wrapper gives the API up to 60
+seconds to exit. A second Ctrl+C ends the wait. A separately started
+Terminal keeps running.
+
+With the venv prepared, run the API directly to skip the environment and
+Terminal startup checks.
 
 ```powershell
 .\.venv\Scripts\python.exe api.py --port 8001
 ```
 
-The direct API start skips the environment and Terminal startup checks.
 Set `THETADATA_REST_FALLBACK_ENABLED=0` in the process environment to disable
 fallback for that run.
 
 ## Windows executable
 
 Use `build.bat` from the repository root to build both apps. To build only
-ThetaDesk from this folder, prepare its environment and run its build script:
+ThetaDesk from this folder, close the packaged app and run the build script.
 
 ```powershell
 python start_project.py --setup-only
 .\build_exe.ps1
 ```
 
-Run `dist\ThetaDesk\ThetaDesk.exe`. The executable starts the local API and
-opens the dashboard in your browser. Keep `.env` or `creds.txt` beside the
-executable for authentication; credentials are not bundled, and existing
-credential files beside the executable are preserved when rebuilding. The
-optional `ThetaTerminal.jar` is copied beside it. Distribute the whole
-`dist\ThetaDesk` folder, not only the `.exe`. The packaged app only loads `.env`
-from beside the executable; it does not search parent folders.
+Run `dist\ThetaDesk\ThetaDesk.exe` to start the API and open the dashboard.
+The executable accepts `--port`, `--no-browser`, and `--no-terminal-prompt`.
+Distribute the whole `dist\ThetaDesk` folder, including its runtime files.
+The build copies the optional `ThetaTerminal.jar` and carries forward
+the installed copy's `.env` and `creds.txt`.
 
-Set `THETADATA_API_KEY` in `.env` for API-key authentication. The launcher
-checks for the key in the environment or `.env`, or for a valid `creds.txt`
-when using email/password authentication. `creds.txt` is not needed when an
-API key is configured; it is ignored by git.
+## Credentials
+
+Use the dashboard's **Settings** to save credentials beside the active app.
+For source runs, this directory is `ThetaDesk`. For the executable, it is
+`dist\ThetaDesk` inside that project. The source and packaged runs share
+market data and have separate credential files.
+
+- API key goes in `.env` as `THETADATA_API_KEY`, or in the process environment.
+- Email and password go on the first two lines of `creds.txt`. Run the raw
+  source commands from the `ThetaDesk` directory so the SDK finds that file.
+  The packaged wrapper runs from the executable's directory.
+
+The SDK tries the API key first. The settings dialog shows credential
+status and the saved email. Blank fields keep saved values. A new password
+requires an email, and changing the email alone keeps the password. Use
+**Remove saved API key** or **Remove saved account** to clear them.
+Restart ThetaData Terminal after changing credentials if you use the REST
+fallback. Keep credential files local.
 
 ## Raw provider lookup
 
@@ -69,33 +85,27 @@ and the SDK raises an error, the app logs that error and tries the local
 ThetaData Terminal REST endpoint at
 `http://127.0.0.1:25510/v2`. Set `THETADATA_REST_BASE_URL` in `.env` to
 override that base URL. If both providers fail, the command reports both
-provider failures. The raw CLI and the raw history endpoint do not store or
-export bars. The raw CLI prints results and logs warnings and errors. The
-SDK's INFO logging includes the authentication session ID.
+provider failures. The raw CLI prints results and uses warning-level
+logging. Use `fetch.py` to store and export the bars.
 
 ## Store and export daily bars
 
-Run the CLI from the `ThetaDesk` folder, using its virtual environment. Its
-dependencies, including the time-zone database for Windows, are pinned in
-`requirements.txt`. The CLI reads the API key from the environment or the
-source `.env`. By default the SDK looks for `creds.txt` in the working
-directory when using email/password. The packaged dashboard keeps its own
-credential settings.
+Run the CLI from the `ThetaDesk` folder with its virtual environment.
 
 ```powershell
 .\.venv\Scripts\python.exe fetch.py --symbols AAPL,NVDA,MSFT --from 2024-01-02 --to 2024-01-05
 ```
 
-Dates are inclusive, with a maximum span of 365 days. The command prints a JSON
-summary for each symbol, including the total bars available and the number added.
+Dates are inclusive, with a maximum span of 365 days. The end date can be
+up to today in New York. The command prints a JSON summary for each
+successful ticker and continues through failures. Exit status 1 means
+at least one ticker failed.
 Bars are saved in `market.db` in `%LOCALAPPDATA%\ThetaDesk`, with its
 `exports` folder beside it. The source app and the executable share this one
 store, outside the release folder, so rebuilding keeps it and other programs
 read one place. Use `--data-dir PATH` to select another folder for both the
-database and its exports. Credentials are separate: they stay beside the
-running app (`.env` and `creds.txt`).
-The raw and stored lookups both use a rate limiter scoped to their process.
-Separate CLI and dashboard processes have separate budgets.
+database and its exports. When `LOCALAPPDATA` is absent, the default
+store is `~/.thetadesk`.
 
 Repeat requests fetch only gaps in previously covered ranges. SQLite tracks
 successful empty ranges as well, such as weekends. For the current New York
@@ -114,12 +124,11 @@ come from the provider's EOD report. [ThetaData EOD report documentation](https:
 The bar key is `(symbol, interval, start_at)`. The store keeps the first
 successfully recorded bar for each key, so two rules keep bad values out:
 
-- A response with an impossible bar is refused whole: a price of zero or less,
-  or an open or close outside the day's low-to-high range.
-- Today's bar is stored only from 18:00 New York time
-  (`DAILY_BAR_FINAL_AT`), after ThetaData's end-of-day report should be final.
-  An earlier fetch skips it, and the next fetch after 18:00 stores it.
-  Assumption: the report is published at about 17:15 New York time.
+- A response must contain finite positive prices, a consistent low-to-high
+  range, and nonnegative integer volumes.
+- Today's bar is eligible to be stored from 18:00 New York time
+  (`DAILY_BAR_FINAL_AT`). The date stays eligible for later fetches until
+  the provider supplies a bar.
 
 Failed exports remain queued in SQLite and are retried before the next fetch, even for another ticker.
 While the export is blocked, stored bars remain available for local reads.
@@ -138,8 +147,8 @@ again. Consumers can deduplicate coverage by symbol, interval, and both dates.
 
 ## HTTP API
 
-The API and dashboard share `http://127.0.0.1:8000`. Interactive API docs
-are at [the local API docs](http://127.0.0.1:8000/docs).
+The API and dashboard share localhost port 8000 by default. Interactive
+API docs are at [/docs](http://127.0.0.1:8000/docs) on the selected port.
 
 | Method and path | Behavior |
 | --- | --- |
@@ -150,50 +159,34 @@ are at [the local API docs](http://127.0.0.1:8000/docs).
 | `GET /api/v1/stocks/{symbol}/bars` | Reads normalized stored bars for the query's `start_date` and `end_date` without calling the provider. |
 | `GET /api/v1/pins`, `POST /api/v1/pins` | Lists pins or adds a pin by `symbol`, `start_date`, and `end_date`. Adding the same pin again is safe. |
 | `DELETE /api/v1/pins/{symbol}/{start_date}/{end_date}`, `DELETE /api/v1/pins` | Removes one pin or clears all pins. Pins live in SQLite and are omitted from exports. |
-| `GET /api/v1/settings/credentials`, `PUT /api/v1/settings/credentials` | GET reports what is saved (`api_key_configured`, `credentials_configured`, `email`), never the secrets. PUT changes them: blank fields keep, `clear_api_key` and `clear_credentials` remove. Same-origin and loopback only. |
+| `GET /api/v1/settings/credentials`, `PUT /api/v1/settings/credentials` | Read credential status (`api_key_configured`, `credentials_configured`, and `email`) or update credentials. `clear_api_key` and `clear_credentials` remove saved values. These routes require a same-origin loopback request. |
 | `POST /api/v1/shutdown` | Requests shutdown on a server started by ThetaDesk. |
 
 ## Frontend
 
-The frontend is a lightweight HTML/CSS/JavaScript app with ticker/date lookup,
-a closing-price timeline chart, tabular results, summary metrics, and a sticky
-area for pinned timeline summaries. Each pin groups the chart with latest close,
-period high, and period low. A pin keeps its ticker and fixed dates in
-`market.db`, so it survives reloads, restarts and rebuilds, and is redrawn from
-stored bars. **Loaded tickers** lists every ticker with stored bars; opening one
-shows its latest year (or all of it, if shorter) without calling ThetaData.
-**Load history** uses the same stored bars and
-exports as the CLI. Select **Retry missing bars** to recheck the range with
-the provider. The raw `GET /api/v1/stocks/{symbol}/history` endpoint remains
-available to existing API clients.
-Symbols with no history in the requested period return an empty data array.
-Use **Browse list** to load ThetaData's stock symbols from
-`/api/v1/stocks/symbols`; the backend caches that list until restart, and the
-picker lets you search and select a ticker. Loading it uses one API request the
-first time. The lookup defaults to the previous 365 days of EOD data. History
-requests longer than 365 days are rejected before reaching ThetaData.
+**Find a ticker** opens the daily history lookup. Use **Browse symbols** to
+search the provider's stock directory, which the API caches until restart.
+**Load history** uses the same store and export path as the CLI.
+**Retry missing bars** rechecks the selected dates with the provider.
 
-Use the settings button in the top bar to update the API key and
-email/password credentials. They are saved to `.env` and `creds.txt` beside the
-active app (beside the executable when packaged), never in browser storage. The
-dialog shows what is saved and the saved email address, but never the key or
-password: the server does not send them back. A blank field keeps the saved
-value; a new password needs an email (typed or already saved), and a new email
-keeps the saved password. **Remove saved API key** and **Remove saved account**
-delete them. The SDK tries the API key first. Restart ThetaData Terminal after
-changing credentials if you use the REST backup.
+**Loaded tickers** and **Pinned summaries** sit beside the lookup on wide
+screens and above **History** on narrow screens. A loaded ticker opens the
+latest year available in the local store. A pin keeps its ticker and fixed
+dates in `market.db` and redraws the chart, latest close, period high, and
+period low from the stored bars.
 
 The backend enforces a process-wide sliding-window limit of 20 outbound
 ThetaData attempts per 60 seconds, including REST fallback attempts. Successful
 history, fetch, and symbol-list responses include `X-RateLimit-Limit`,
 `X-RateLimit-Remaining`, and
 `X-RateLimit-Reset-After` (seconds); rejected calls return HTTP 429 with
-`Retry-After`. This in-memory limit resets when the backend restarts, so keep
-the API bound to localhost. The dashboard itself has no separate sign-in.
+`Retry-After`. Each CLI or API process has its own budget, which resets
+when that process restarts. Keep the dashboard bound to localhost.
 
 ## Tests
 
-Run these from the `ThetaDesk` folder. The tests use fakes for provider calls.
+Run these from the `ThetaDesk` folder after preparing its environment.
+The tests use fake provider responses.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests

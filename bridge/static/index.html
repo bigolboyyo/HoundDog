@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>theta_hound bridge</title>
+  <title>Bridge · ThetaHound</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="top">
-    <h1>theta_hound bridge</h1>
+    <h1>ThetaHound Bridge</h1>
     <div class="top-actions">
       <span id="updated" class="muted"></span>
       <button id="refresh" type="button">Refresh</button>
@@ -19,88 +19,26 @@
   <p id="notice" class="notice" role="alert" hidden></p>
 
   <main>
-    <section class="panel watchlist" aria-labelledby="watchlist-title">
-      <div class="section-heading">
-        <h2 id="watchlist-title">Watchlist</h2>
-        <p class="muted" id="market-target"></p>
-      </div>
-      <div class="watchlist-grid" id="watchlist" aria-live="polite"></div>
-      <details class="watch-editor">
-        <summary>Watch tickers</summary>
-        <p class="muted">Add a HoundDog topic and include the ticker in the study. Groups pool the sessions from their member tickers.</p>
-      <p id="watch-off" class="muted" hidden></p>
-      <form id="watch-form">
-        <fieldset>
-          <legend>Tickers (those with prices in ThetaDesk, plus any you add)</legend>
-          <div id="ticker-choices" class="choices"></div>
-          <div class="inline">
-            <label for="other-ticker">Another ticker</label>
-            <input id="other-ticker" maxlength="16" autocomplete="off" placeholder="e.g. TSLA">
-            <button id="add-other" type="button">Add</button>
-          </div>
-        </fieldset>
-        <div id="keyword-rows" class="keyword-rows"></div>
-        <div class="inline">
-          <label for="group-name">Group (optional)</label>
-          <input id="group-name" maxlength="80" list="group-names" autocomplete="off" placeholder="e.g. Tech Bros">
-          <datalist id="group-names"></datalist>
-        </div>
-        <button id="watch-submit" type="submit" class="primary" disabled>Watch selected tickers</button>
-        <button id="watch-load" type="submit" disabled>Watch and load price history</button>
-        <ul id="watch-results" class="results" aria-live="polite"></ul>
-      </form>
-      </details>
-    </section>
-
-    <section id="pins-panel" class="panel pins-panel" aria-labelledby="pins-title" hidden>
-      <h2 id="pins-title">Pinned ranges</h2>
-      <p class="muted" id="pin-status" role="status"></p>
-      <ul id="pins-list" class="pins-list"></ul>
-    </section>
-
-    <section class="panel" aria-labelledby="study-title">
-      <h2 id="study-title">Study: news sessions against quiet sessions</h2>
-      <details class="study-guide">
-        <summary>How to read this study</summary>
-        <p>Average move is the size of the close-to-close change, up or down. Volume is a multiple
-          of the ticker's median. These comparisons describe the sessions in the sample. They
-          cannot establish whether news caused a price move.</p>
-        <p>A news session has at least one eligible live article. A quiet session has no such article
-          and at least one qualifying weekday HoundDog check between the two closes.
-          Both groups require a close-to-close return.</p>
-        <p>Bridge uses the first detection time in New York. Friday at or after the close through
-          Sunday goes in Weekend news. Other detections go to that day's session before the close
-          or the next trading session after it.</p>
-      </details>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Ticker or group</th>
-              <th scope="col">News sessions</th>
-              <th scope="col">Quiet sessions</th>
-              <th scope="col">Avg move, news</th>
-              <th scope="col">Avg move, quiet</th>
-              <th scope="col">Volume, news</th>
-              <th scope="col">Volume, quiet</th>
-              <th scope="col" class="verdict">Verdict</th>
-            </tr>
-          </thead>
-          <tbody id="study-rows"></tbody>
-        </table>
-      </div>
-      <details id="study-notes-panel" class="study-guide" hidden>
-        <summary>Data notes</summary>
-        <ul id="study-notes" class="notes"></ul>
-      </details>
-    </section>
-
     <section class="panel" id="ticker-detail" aria-labelledby="detail-title">
-      <div class="inline">
-        <h2 id="detail-title" tabindex="-1">Ticker detail</h2>
+      <div class="section-heading detail-heading">
+        <h2 id="detail-title" tabindex="-1">Ticker study</h2>
         <label for="detail-symbol" class="visually-hidden">Ticker</label>
         <select id="detail-symbol"></select>
       </div>
+      <dl id="data-freshness" class="data-freshness" hidden>
+        <div>
+          <dt>Close</dt>
+          <dd id="detail-close"></dd>
+        </div>
+        <div>
+          <dt>Prices through</dt>
+          <dd id="prices-through"></dd>
+        </div>
+        <div>
+          <dt>Last HoundDog check (ET)</dt>
+          <dd id="last-news-check"></dd>
+        </div>
+      </dl>
       <form id="range-form" class="inline range-controls" hidden>
         <label for="range-start">From</label>
         <input id="range-start" type="date" required>
@@ -111,31 +49,40 @@
         <button id="pin-range" type="button" hidden>Pin this range</button>
       </form>
       <p id="range-status" class="muted" role="status" hidden></p>
-      <div id="chart" class="chart" role="group" aria-label="Closing prices and news markers"></div>
-      <p id="chart-key" class="legend" hidden>
-        <span class="dot news" aria-hidden="true"></span> Select a news marker to see the price move and articles.
-      </p>
-      <article id="session-evidence" class="session-evidence" aria-live="polite" hidden></article>
-      <section id="weekly-news" class="weekly-news" aria-labelledby="weekly-news-title" hidden>
-        <div class="weekly-news-header">
-          <h3 id="weekly-news-title">Weekly news</h3>
-          <div class="week-nav" role="group" aria-label="News week">
-            <button id="week-prev" type="button" aria-label="Previous news week">‹</button>
-            <span id="week-dates" aria-live="polite"></span>
-            <button id="week-next" type="button" aria-label="Next news week">›</button>
-          </div>
-        </div>
-        <div class="week-scope" role="group" aria-label="Days to show">
-          <button id="weekdays-news" type="button" aria-pressed="true">Weekdays</button>
-          <button id="full-week-news" type="button" aria-pressed="false">Full week</button>
-        </div>
-        <p id="weekly-news-count" class="muted" role="status"></p>
-        <ul id="weekly-news-list" class="weekly-news-list"></ul>
-        <section id="weekend-news" class="weekend-news" aria-labelledby="weekend-news-title" hidden>
-          <h4 id="weekend-news-title">Weekend news</h4>
-          <ul id="weekend-news-list" class="weekly-news-list"></ul>
-        </section>
+      <section id="pins-panel" class="pins-panel" aria-labelledby="pins-title" hidden>
+        <h3 id="pins-title">Pinned ranges</h3>
+        <p class="muted" id="pin-status" role="status"></p>
+        <ul id="pins-list" class="pins-list"></ul>
       </section>
+      <div class="ticker-workspace">
+        <div class="ticker-chart">
+          <div id="chart" class="chart" role="group" aria-label="Closing prices and news markers"></div>
+          <p id="chart-key" class="legend" hidden>
+            <span class="dot news" aria-hidden="true"></span> Select a news marker to see the price move and articles.
+          </p>
+          <article id="session-evidence" class="session-evidence" aria-live="polite" hidden></article>
+        </div>
+        <section id="weekly-news" class="weekly-news" aria-labelledby="weekly-news-title" hidden>
+          <div class="weekly-news-header">
+            <h3 id="weekly-news-title">Weekly news</h3>
+            <div class="week-nav" role="group" aria-label="News week">
+              <button id="week-prev" type="button" aria-label="Previous news week">‹</button>
+              <span id="week-dates" aria-live="polite"></span>
+              <button id="week-next" type="button" aria-label="Next news week">›</button>
+            </div>
+          </div>
+          <div class="week-scope" role="group" aria-label="Days to show">
+            <button id="weekdays-news" type="button" aria-pressed="true">Weekdays</button>
+            <button id="full-week-news" type="button" aria-pressed="false">Full week</button>
+          </div>
+          <p id="weekly-news-count" class="muted" role="status"></p>
+          <ul id="weekly-news-list" class="weekly-news-list"></ul>
+          <section id="weekend-news" class="weekend-news" aria-labelledby="weekend-news-title" hidden>
+            <h4 id="weekend-news-title">Weekend news</h4>
+            <ul id="weekend-news-list" class="weekly-news-list"></ul>
+          </section>
+        </section>
+      </div>
       <details id="study-details" class="study-guide" hidden>
         <summary>Study details</summary>
         <h3>HoundDog activity</h3>
@@ -182,6 +129,77 @@
         </div>
       </details>
     </section>
+
+    <section class="panel watchlist" aria-labelledby="watchlist-title">
+      <div class="section-heading">
+        <h2 id="watchlist-title">Watchlist</h2>
+        <p class="muted" id="market-target"></p>
+      </div>
+      <div class="watchlist-grid" id="watchlist" aria-live="polite"></div>
+      <details class="watch-editor">
+        <summary>Watch tickers</summary>
+        <p class="muted">Add a HoundDog topic and include the ticker in the study. Groups pool the sessions from their member tickers.</p>
+        <p id="watch-off" class="muted" hidden></p>
+        <form id="watch-form">
+          <fieldset>
+            <legend>Tickers (those with prices in ThetaDesk, plus any you add)</legend>
+            <div id="ticker-choices" class="choices"></div>
+            <div class="inline">
+              <label for="other-ticker">Another ticker</label>
+              <input id="other-ticker" maxlength="16" autocomplete="off" placeholder="e.g. TSLA">
+              <button id="add-other" type="button">Add</button>
+            </div>
+          </fieldset>
+          <div id="keyword-rows" class="keyword-rows"></div>
+          <div class="inline">
+            <label for="group-name">Group (optional)</label>
+            <input id="group-name" maxlength="80" list="group-names" autocomplete="off" placeholder="e.g. Tech Bros">
+            <datalist id="group-names"></datalist>
+          </div>
+          <button id="watch-submit" type="submit" class="primary" disabled>Watch selected tickers</button>
+          <button id="watch-load" type="submit" disabled>Watch and load price history</button>
+          <ul id="watch-results" class="results" aria-live="polite"></ul>
+        </form>
+      </details>
+    </section>
+
+    <section class="panel" aria-labelledby="study-title">
+      <h2 id="study-title">Study: news sessions against quiet sessions</h2>
+      <details class="study-guide">
+        <summary>How to read this study</summary>
+        <p>Average move is the size of the close-to-close change, up or down. Volume is a multiple
+          of the ticker's median. These comparisons describe the sessions in the sample. They
+          cannot establish whether news caused a price move.</p>
+        <p>A news session has at least one eligible live article. A quiet session has no such article
+          and at least one qualifying weekday HoundDog check between the two closes.
+          Both groups require a close-to-close return.</p>
+        <p>Bridge uses the first detection time in New York. Friday at or after the close through
+          Sunday goes in Weekend news. Other detections go to that day's session before the close
+          or the next trading session after it.</p>
+      </details>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Ticker or group</th>
+              <th scope="col">News sessions</th>
+              <th scope="col">Quiet sessions</th>
+              <th scope="col">Avg move, news</th>
+              <th scope="col">Avg move, quiet</th>
+              <th scope="col">Volume, news</th>
+              <th scope="col">Volume, quiet</th>
+              <th scope="col" class="verdict">Verdict</th>
+            </tr>
+          </thead>
+          <tbody id="study-rows"></tbody>
+        </table>
+      </div>
+      <details id="study-notes-panel" class="study-guide" hidden>
+        <summary>Data notes</summary>
+        <ul id="study-notes" class="notes"></ul>
+      </details>
+    </section>
+
     <details class="panel source-details">
       <summary>Sources and connections</summary>
       <div class="cards">

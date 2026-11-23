@@ -865,6 +865,18 @@ html[data-color-mode] body {
   margin-bottom: 8px;
 }
 
+.inbox-check-status {
+  margin: 4px 0 0;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.inbox-check-status:empty {
+  display: none;
+}
+
 .section-heading .button {
   min-width: 0;
   max-width: 100%;

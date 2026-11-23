@@ -189,16 +189,16 @@ def _start_terminal_if_needed() -> subprocess.Popen[bytes] | None:
             _stop_process(terminal_process)
 
 
-def _open_browser_when_ready() -> None:
+def _open_browser_when_ready(port: int) -> None:
     deadline = time.monotonic() + TERMINAL_STARTUP_TIMEOUT
     while time.monotonic() < deadline:
-        if _is_port_open(API_HOST, API_PORT):
-            webbrowser.open(f"http://{API_HOST}:{API_PORT}/")
+        if _is_port_open(API_HOST, port):
+            webbrowser.open(f"http://{API_HOST}:{port}/")
             return
         time.sleep(0.25)
 
 
-def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bool = False) -> int:
+def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bool = False, port: int = API_PORT) -> int:
     if setup_only and IS_FROZEN:
         print("Run start_project.py from source to prepare the build environment.")
         return 1
@@ -215,9 +215,9 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bo
         if setup_only:
             print("ThetaDesk build environment is ready.")
             return 0
-        if _is_port_open(API_HOST, API_PORT):
+        if _is_port_open(API_HOST, port):
             raise RuntimeError(
-                f"Port {API_PORT} is already in use; stop its process first."
+                f"Port {port} is already in use; stop its process first."
             )
 
         fallback_enabled = _is_port_open(TERMINAL_HOST, TERMINAL_PORT)
@@ -240,7 +240,7 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bo
         else:
             print("Continuing with the Python client only.")
 
-        print(f"Starting the API. Docs will be at http://{API_HOST}:{API_PORT}/docs")
+        print(f"Starting the API. Docs will be at http://{API_HOST}:{port}/docs")
         api_environment = os.environ.copy()
         api_environment["THETADATA_REST_FALLBACK_ENABLED"] = (
             "1" if fallback_enabled else "0"
@@ -255,10 +255,11 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bo
             if open_browser:
                 threading.Thread(
                     target=_open_browser_when_ready,
+                    args=(port,),
                     daemon=True,
                 ).start()
-            print(f"Starting the API. Opening http://{API_HOST}:{API_PORT}/")
-            serve(API_HOST, API_PORT)
+                print(f"Opening http://{API_HOST}:{port}/")
+            serve(API_HOST, port)
             return 0
 
         api_process = subprocess.Popen(
@@ -268,7 +269,7 @@ def main(*, ask_terminal: bool = True, open_browser: bool = True, setup_only: bo
                 "--host",
                 API_HOST,
                 "--port",
-                str(API_PORT),
+                str(port),
             ],
             cwd=PROJECT_ROOT,
             env=api_environment,
@@ -293,10 +294,14 @@ if __name__ == "__main__":
     parser.add_argument("--no-terminal-prompt", action="store_true",
                         help="Use a running Terminal if available and skip the startup prompt.")
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser in the packaged app.")
+    parser.add_argument("--port", type=int, default=API_PORT, help="Dashboard port (default: %(default)s).")
     parser.add_argument("--setup-only", action="store_true", help="Prepare the source environment without starting services.")
     options = parser.parse_args()
+    if not 1 <= options.port <= 65535:
+        parser.error("--port must be between 1 and 65535.")
     raise SystemExit(main(
         ask_terminal=not options.no_terminal_prompt,
         open_browser=not options.no_browser,
         setup_only=options.setup_only,
+        port=options.port,
     ))
